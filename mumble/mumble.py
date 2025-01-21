@@ -13,6 +13,7 @@ import warnings
 
 import pandas as pd
 import pickle
+import platformdirs
 from psm_utils.io import read_file, write_file
 from psm_utils import PSMList, PSM, Peptidoform
 from psm_utils.utils import mz_to_mass
@@ -828,7 +829,9 @@ class _ModificationCache:
         return:
             str: path to cache file
         """
-        return str(importlib.resources.files("mumble.package_data") / "modifications_cache.pkl")
+        cache_dir = platformdirs.user_cache_dir(appname="mumble")
+        os.makedirs(cache_dir, exist_ok=True)
+        return os.path.join(cache_dir, "modifications_cache.pkl")
 
     @staticmethod
     def _calculate_file_hash(file_path: str) -> str:
