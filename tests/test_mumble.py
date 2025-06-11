@@ -112,7 +112,7 @@ class TestPSMHandler:
                 Localised_mass_shifts=[Localised_mass_shift("N-term", "Acetyl")]
             )
         ]
-        new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=True)
+        new_psms = psm_handler._get_modified_peptidoforms(psm, include_original_psm=True)
 
         assert isinstance(new_psms, list)
         assert len(new_psms) == 2
@@ -124,7 +124,7 @@ class TestPSMHandler:
             Modification_candidate(Localised_mass_shifts=[Localised_mass_shift(1, "Carbamyl")]),
             Modification_candidate(Localised_mass_shifts=[Localised_mass_shift(4, "Carbamyl")]),
         ]
-        new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=False)
+        new_psms = psm_handler._get_modified_peptidoforms(psm, include_original_psm=False)
 
         assert isinstance(new_psms, list)
         assert len(new_psms) == 2
@@ -140,7 +140,7 @@ class TestPSMHandler:
                 ]
             )
         ]
-        new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=False)
+        new_psms = psm_handler._get_modified_peptidoforms(psm, include_original_psm=False)
 
         assert isinstance(new_psms, list)
         assert len(new_psms) == 1  # 1 combined psm expected
@@ -155,7 +155,7 @@ class TestPSMHandler:
         mod_handler.localize_mass_shift.return_value = [
             Modification_candidate(Localised_mass_shifts=[Localised_mass_shift("N-term", "mod1")])
         ]
-        new_psm_list = psm_handler.add_modified_psms(psm_list, keep_original=True)
+        new_psm_list = psm_handler.add_modified_psms(psm_list, include_original_psm=True)
 
         assert isinstance(new_psm_list, PSMList)
         assert len(new_psm_list) > 1
@@ -226,13 +226,15 @@ class TestPSMHandler:
             peptidoform in result_peptidoforms for peptidoform in expected_double_mod_Peptidoforms
         )
 
-    def test_tool_keep_original(self, setup_psm):
+    def test_tool_include_original_psm(self, setup_psm):
         # psm_handler = setup_psmhandler[0]
         psm_handler = PSMHandler(combination_length=1)
 
         psm = setup_psm
 
-        result_psm_list = psm_handler.get_modified_peptidoforms_list(psm, keep_original=True)
+        result_psm_list = psm_handler.get_modified_peptidoforms_list(
+            psm, include_original_psm=True
+        )
 
         assert psm in result_psm_list
         assert len(result_psm_list) == 3
@@ -783,7 +785,7 @@ class TestModificationHandler:
         )
 
         mapped_psms = psm_handler.add_modified_psms(
-            psm_list_unmapped_psms, keep_original=False, generate_modified_decoys=False
+            psm_list_unmapped_psms, include_original_psm=False, include_decoy_psm=False
         )
 
         expected_peptidoforms = [
@@ -826,7 +828,7 @@ class TestModificationHandler:
         )
 
         mapped_psms = psm_handler.add_modified_psms(
-            psm_list_unmapped_psms, keep_original=False, generate_modified_decoys=False
+            psm_list_unmapped_psms, include_original_psm=False, include_decoy_psm=False
         )
 
         assert len(mapped_psms) == 426
