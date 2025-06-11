@@ -60,5 +60,6 @@ push            = false
 "pyproject.toml" = ['current_version = "{version}"', 'version = "{version}"']
 "mumble/__init__.py" = ['__version__ = "{version}"']
 
-[tool.setuptools.packages.find]
-include = ["mumble*"]
+[tool.setuptools]
+packages = ["mumble*"]
+package-data = { "mumble" = ["default_ptm_list.tsv", "unimod.db"] }

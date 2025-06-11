@@ -1,4 +1,5 @@
 from copy import deepcopy
+import importlib.resources
 import logging
 import itertools
 import os
@@ -7,6 +8,7 @@ from collections import namedtuple
 from pathlib import Path
 from functools import lru_cache
 import hashlib
+import importlib
 
 import pandas as pd
 import pickle
@@ -17,6 +19,7 @@ from pyteomics import proforma
 from pyteomics.mass import std_aa_mass, unimod
 from pyteomics.fasta import IndexedFASTA
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.pretty import pretty_repr
 
 # Add a logger
 logger = logging.getLogger(__name__)
@@ -43,7 +46,7 @@ class PSMHandler:
             fasta_file=self.params["fasta_file"],
             combination_length=self.params["combination_length"],
             exclude_mutations=self.params["exclude_mutations"],
-            unimod_modification_file=self.params["unimod_modification_file"],
+            modification_file=self.params["modification_file"],
         )
         self.psm_file_name = None
 
@@ -69,18 +72,22 @@ class PSMHandler:
             "include_original_psm": False,
             "include_decoy_psm": False,
             "psm_file_type": "infer",
-            "unimod_modification_file": None,
+            "modification_file": str(
+                importlib.resources.files("mumble.package_data") / "default_ptm_list.tsv"
+            ),
             "modification_mapping": {},
+            "all_unimod_modifications": False,
         }
 
-        # Use a single loop to consolidate parameters
         params = {
             key: overrides.get(
                 key, self.config_loader.get(key, default) if self.config_loader else default
             )
             for key, default in keys_with_defaults.items()
         }
-        logger.info(f"Mumble config: {params}")
+        if params["all_unimod_modifications"]:
+            params["modification_file"] = False
+        logger.info(f"Mumble config: {pretty_repr(params)}")
 
         return params
 
@@ -399,7 +406,7 @@ class _ModificationHandler:
         fasta_file=None,
         combination_length=1,
         exclude_mutations=False,
-        unimod_modification_file=None,
+        modification_file=None,
     ) -> None:
         """
         Constructor of the class.
@@ -415,14 +422,17 @@ class _ModificationHandler:
         self.cache = _ModificationCache(
             combination_length=combination_length,
             exclude_mutations=exclude_mutations,
-            modification_file=unimod_modification_file,
+            modification_file=modification_file,
         )
         self.cache.load_cache()
 
         self.modification_df = self.cache.modification_df
         self.monoisotopic_masses = self.cache.monoisotopic_masses
         self.modifications_names = self.cache.modifications_names
-
+        if len(self.modification_df["name"].unique()) == 0:
+            raise ValueError(
+                "No modifications found in the modification file. Please check fileformat."
+            )
         logger.info(
             f'Including {len(self.modification_df["name"].unique())} unique modifications on {len(self.modification_df["name"])} sites'
         )
@@ -803,7 +813,7 @@ class _ModificationCache:
         Args:
             force_reload (bool, optional): If True, regenerate the cache even if it exists. Defaults to False.
         """
-        self._load_or_generate_data(self.cache_file, force_reload=force_reload)
+        self._load_or_generate_data(force_reload=force_reload)
 
     @classmethod
     def _get_cache_file_path(cls):
@@ -813,15 +823,7 @@ class _ModificationCache:
         return:
             str: path to cache file
         """
-        current_dir = os.path.dirname(os.path.realpath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        cache_dir = os.path.join(parent_dir, "modification_cache")
-
-        # Create the cache directory if it doesn't exist
-        os.makedirs(cache_dir, exist_ok=True)
-
-        cache_file = os.path.join(cache_dir, "modification_cache.pkl")
-        return cache_file
+        return str(importlib.resources.files("mumble.package_data") / "modifications_cache.pkl")
 
     @staticmethod
     def _calculate_file_hash(file_path: str) -> str:
@@ -840,11 +842,11 @@ class _ModificationCache:
                 sha256.update(chunk)
         return sha256.hexdigest()
 
-    def _load_or_generate_data(self, cache_file: str, force_reload: bool = False) -> None:
+    def _load_or_generate_data(self, force_reload: bool = False) -> None:
         """Load data from cache or generate and save it if cache doesn't exist."""
-        if os.path.exists(cache_file) and not force_reload:
+        if os.path.exists(self.cache_file) and not force_reload:
             logger.info("Checking cache")
-            with open(cache_file, "rb") as f:
+            with open(self.cache_file, "rb") as f:
                 cache_data = pickle.load(f)
 
             if cache_data["metadata"] == (
@@ -860,11 +862,11 @@ class _ModificationCache:
                     self.modifications_names = cache_data["modifications_names"]
                 except KeyError:
                     logger.info("Cached data invalid or incomplete, regenerating cache")
-                    self._regenerate_and_save_cache(cache_file)
+                    self._regenerate_and_save_cache()
             else:
-                self._regenerate_and_save_cache(cache_file)
+                self._regenerate_and_save_cache()
         else:
-            self._regenerate_and_save_cache(cache_file)
+            self._regenerate_and_save_cache()
 
     def get_unimod_database(self):
         """
@@ -873,7 +875,11 @@ class _ModificationCache:
         Args:
             exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
-        unimod_db = unimod.Unimod()
+
+        # Load Unimod database
+        unimod_db = unimod.Unimod(
+            "sqlite:///" + str(importlib.resources.files("mumble.package_data") / "unimod.db")
+        )
         position_id_mapper = {
             2: "anywhere",
             3: "N-term",
@@ -1000,7 +1006,7 @@ class _ModificationCache:
         else:
             return [], []
 
-    def _regenerate_and_save_cache(self, cache_file: str) -> None:
+    def _regenerate_and_save_cache(self) -> None:
         """Regenerate data and save it to the cache."""
         logger.info("Generating cache data")
         self.get_unimod_database()
@@ -1010,7 +1016,7 @@ class _ModificationCache:
         logger.debug(
             f"New cache metadata: \ncombination length {self.combination_length}, \nexclude_mutations {self.exclude_mutations},\nmodification file hash {self.modification_file_hash}",
         )
-        with open(cache_file, "wb") as f:
+        with open(self.cache_file, "wb") as f:
             pickle.dump(
                 {
                     "metadata": (

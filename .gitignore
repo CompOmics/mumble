@@ -1,4 +1,4 @@
-modification_cache/*
+mumble/package_data/modifications_cache.pkl
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

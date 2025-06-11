@@ -1,7 +1,7 @@
 import click
 import logging
 import sys
-
+import importlib
 from rich.logging import RichHandler
 
 from mumble import PSMHandler, remove_modification_cache
@@ -20,9 +20,11 @@ CLI_OPTIONS = {
         "type": click.Path(exists=True),
         "help": "Path to the input file.",
     },
-    "unimod_modification_file": {
+    "modification_file": {
         "type": click.Path(exists=True),
         "help": "Restriction list of modifications to use from Unimod.",
+        "default": str(importlib.resources.files("mumble.package_data") / "default_ptm_list.tsv"),
+        "show_default": True,
     },
     "psm_file_type": {
         "type": click.STRING,
@@ -90,6 +92,12 @@ CLI_OPTIONS = {
         "type": click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
         "default": "INFO",
         "help": "Set the logging level",
+        "show_default": True,
+    },
+    "all_unimod_modifications": {
+        "is_flag": True,
+        "default": False,
+        "help": "Instead of using a subset of modifications from Unimod, use all available modifications.",
         "show_default": True,
     },
 }
