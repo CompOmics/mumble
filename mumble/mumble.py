@@ -1056,6 +1056,10 @@ class _ModificationCache:
             return None, None
 
 
+def remove_modification_cache():
+    _ModificationCache._remove_cache()
+
+
 class JSONConfigLoader:
     """Loads a single-level configuration from a JSON file."""
 

@@ -4,8 +4,7 @@ import sys
 
 from rich.logging import RichHandler
 
-from mumble import PSMHandler, _ModificationCache
-
+from mumble import PSMHandler, remove_modification_cache
 
 # setup logging
 logging.basicConfig(
@@ -110,7 +109,7 @@ def main(clear_cache, **kwargs):
     """
     # if the user just wants to clear the cache, do it and quit
     if clear_cache:
-        _ModificationCache._remove_cache()
+        remove_modification_cache()
         logging.info("Exiting Mumble. You will find your match another time.")
         sys.exit(0)
 
