@@ -61,5 +61,5 @@ push            = false
 "mumble/__init__.py" = ['__version__ = "{version}"']
 
 [tool.setuptools]
-packages = ["mumble*"]
+packages = ["mumble"]
 package-data = { "mumble" = ["default_ptm_list.tsv", "unimod.db"] }
