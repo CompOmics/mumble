@@ -162,13 +162,12 @@ class TestPSMHandler:
 
     def test_tool_combination_length_1(self, setup_psm):
 
-        psm_handler = PSMHandler(combination_length=1, exclude_mutations=False)
+        psm_handler = PSMHandler(
+            combination_length=1, exclude_mutations=False, all_unimod_modifications=True
+        )
 
         # retrigger get_unimod_database
-        cache_file = psm_handler.modification_handler.cache._get_cache_file_path()
-        psm_handler.modification_handler.cache._load_or_generate_data(
-            cache_file, force_reload=True
-        )
+        psm_handler.modification_handler.cache.load_cache(force_reload=True)
         psm = setup_psm
 
         result_psm_list = psm_handler.get_modified_peptidoforms_list(psm)
@@ -186,13 +185,10 @@ class TestPSMHandler:
 
     def test_tool_combination_length_2(self, setup_psm):
 
-        psm_handler = PSMHandler(combination_length=2)
+        psm_handler = PSMHandler(combination_length=2, all_unimod_modifications=True)
 
         # retrigger get_unimod_database
-        cache_file = psm_handler.modification_handler.cache._get_cache_file_path()
-        psm_handler.modification_handler.cache._load_or_generate_data(
-            cache_file, force_reload=True
-        )
+        psm_handler.modification_handler.cache._load_or_generate_data(force_reload=True)
 
         psm = setup_psm
         result_psm_list = psm_handler.get_modified_peptidoforms_list(psm)
@@ -228,7 +224,7 @@ class TestPSMHandler:
 
     def test_tool_include_original_psm(self, setup_psm):
         # psm_handler = setup_psmhandler[0]
-        psm_handler = PSMHandler(combination_length=1)
+        psm_handler = PSMHandler(combination_length=1, all_unimod_modifications=True)
 
         psm = setup_psm
 
@@ -782,6 +778,7 @@ class TestModificationHandler:
             mass_error=0.02,
             exclude_mutations=True,
             combination_length=1,
+            all_unimod_modifications=True,
         )
 
         mapped_psms = psm_handler.add_modified_psms(
@@ -825,6 +822,7 @@ class TestModificationHandler:
             mass_error=0.02,
             exclude_mutations=True,
             combination_length=2,
+            all_unimod_modifications=True,
         )
 
         mapped_psms = psm_handler.add_modified_psms(
