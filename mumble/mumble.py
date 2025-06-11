@@ -6,6 +6,7 @@ import json
 from collections import namedtuple
 from pathlib import Path
 from functools import lru_cache
+import hashlib
 
 import pandas as pd
 import pickle
@@ -65,8 +66,8 @@ class PSMHandler:
             "psm_list": None,
             "output_file": None,
             "write_filetype": "tsv",
-            "keep_original": False,
-            "generate_modified_decoys": False,
+            "include_original_psm": False,
+            "include_decoy_psm": False,
             "psm_file_type": "infer",
             "unimod_modification_file": None,
             "modification_mapping": {},
@@ -195,20 +196,20 @@ class PSMHandler:
         copy_psm.peptidoform = new_peptidoform
         return copy_psm
 
-    def _get_modified_peptidoforms(self, psm, keep_original=False) -> list:
+    def _get_modified_peptidoforms(self, psm, include_original_psm=False) -> list:
         """
         Get modified peptidoforms derived from a single PSM.
 
         Args:
             psm (psm_utils.PSM): Original PSM object.
-            keep_original (bool, optional): Whether to keep the original PSM alongside modified ones. Defaults to False.
+            include_original_psm (bool, optional): Whether to keep the original PSM alongside modified ones. Defaults to False.
 
         Returns:
             list: List of modified PSMs, or None if no modifications were applied.
         """
         modified_peptidoforms = []
 
-        if keep_original:
+        if include_original_psm:
             psm["metadata"]["original_psm"] = True
             modified_peptidoforms.append(psm)
 
@@ -228,26 +229,28 @@ class PSMHandler:
 
         return modified_peptidoforms
 
-    def get_modified_peptidoforms_list(self, psm, keep_original=False) -> PSMList:
+    def get_modified_peptidoforms_list(self, psm, include_original_psm=False) -> PSMList:
         """
         Get modified peptidoforms derived from 1 PSM in a PSMList.
 
         Args:
             psm (psm_utils.PSM): PSM object
-            keep_original (bool, optional): Keep the original PSM. Defaults to False.
+            include_original_psm (bool, optional): Keep the original PSM. Defaults to False.
 
         return:
             psm_utils.PSMList: PSMList object
         """
-        modified_peptidoforms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
+        modified_peptidoforms = self._get_modified_peptidoforms(
+            psm, include_original_psm=include_original_psm
+        )
         return PSMList(psm_list=modified_peptidoforms)
 
     def add_modified_psms(
         self,
         psm_list=None,
         psm_file_type=None,
-        generate_modified_decoys=None,
-        keep_original=None,
+        include_decoy_psm=None,
+        include_original_psm=None,
     ) -> PSMList:
         """
         Add modified PSMs to a PSMList based on open modification searches.
@@ -255,8 +258,8 @@ class PSMHandler:
         Args:
             psm_list (str, list, or PSMList): Path to a PSM file, list of PSMs, or a PSMList object.
             psm_file_type (str, optional): Type of PSM file to read, inferred automatically if not provided. Defaults to "infer".
-            generate_modified_decoys (bool, optional): Whether to generate decoys for the modified PSMs. Defaults to False.
-            keep_original (bool, optional): Whether to keep the original unmodified PSMs. Defaults to False.
+            include_decoy_psm (bool, optional): Whether to generate decoys for the modified PSMs. Defaults to False.
+            include_original_psm (bool, optional): Whether to keep the original unmodified PSMs. Defaults to False.
 
         Returns:
             psm_utils.PSMList: A new PSMList object containing the modified PSMs.
@@ -266,15 +269,15 @@ class PSMHandler:
                 pass
             else:
                 raise ValueError("No PSM list provided")
-        if not generate_modified_decoys:
-            generate_modified_decoys = self.params["generate_modified_decoys"]
-        if not keep_original:
-            keep_original = self.params["keep_original"]
+        if not include_decoy_psm:
+            include_decoy_psm = self.params["include_decoy_psm"]
+        if not include_original_psm:
+            include_original_psm = self.params["include_original_psm"]
         if not psm_file_type:
             psm_file_type = self.params["psm_file_type"]
 
         logger.info(
-            f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modfied decoys"
+            f"Adding modified PSMs to PSMlist {'WITH' if include_original_psm else 'WITHOUT'} originals, {'INCLUDING' if include_decoy_psm else 'EXCLUDING'} modfied decoys"
         )
 
         parsed_psm_list = self._parse_psm_list(
@@ -295,12 +298,16 @@ class PSMHandler:
 
             task = progress.add_task("Processing PSMs...", total=len(parsed_psm_list))
             for psm in parsed_psm_list:
-                if (psm.is_decoy) & (not generate_modified_decoys):
+                if (psm.is_decoy) & (not include_decoy_psm):
                     progress.update(task, advance=1)
                     continue
-                new_psms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
+                new_psms = self._get_modified_peptidoforms(
+                    psm, include_original_psm=include_original_psm
+                )
                 if new_psms:
-                    total_new_psms += len(new_psms) if not keep_original else len(new_psms) - 1
+                    total_new_psms += (
+                        len(new_psms) if not include_original_psm else len(new_psms) - 1
+                    )
                     mass_shifted_psms += 1
                     new_psm_list.extend(new_psms)
                 progress.update(task, advance=1)
@@ -763,6 +770,9 @@ class _ModificationCache:
         self.combination_length = combination_length
         self.exclude_mutations = exclude_mutations
         self.modification_file = modification_file
+        self.modification_file_hash = (
+            self._calculate_file_hash(modification_file) if modification_file else None
+        )
         self.modification_inclusion_dict, self.filter_key = self._read_unimod_file(
             modification_file
         )
@@ -791,6 +801,23 @@ class _ModificationCache:
         cache_file = os.path.join(cache_dir, "modification_cache.pkl")
         return cache_file
 
+    @staticmethod
+    def _calculate_file_hash(file_path: str) -> str:
+        """
+        Calculate the SHA-256 hash of a file.
+
+        Args:
+            file_path (str): Path to the file to hash.
+
+        Returns:
+            str: SHA-256 hash of the file.
+        """
+        sha256 = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+
     def _load_or_generate_data(self, cache_file: str, force_reload: bool = False) -> None:
         """Load data from cache or generate and save it if cache doesn't exist."""
         if os.path.exists(cache_file) and not force_reload:
@@ -802,6 +829,7 @@ class _ModificationCache:
                 self.combination_length,
                 self.exclude_mutations,
                 self.modification_file,
+                self.modification_file_hash,
             ):
                 try:
                     logger.info("Loading cache data")
@@ -957,7 +985,9 @@ class _ModificationCache:
         self.monoisotopic_masses, self.modifications_names = (
             self._generate_modifications_combinations_lists(self.combination_length)
         )
-
+        logger.debug(
+            f"New cache metadata: {self.combination_length}, {self.exclude_mutations}, {self.modification_file}, {self.modification_file_hash}"
+        )
         with open(cache_file, "wb") as f:
             pickle.dump(
                 {
@@ -965,6 +995,7 @@ class _ModificationCache:
                         self.combination_length,
                         self.exclude_mutations,
                         self.modification_file,
+                        self.modification_file_hash,
                     ),
                     "modification_df": self.modification_df,
                     "monoisotopic_masses": self.monoisotopic_masses,

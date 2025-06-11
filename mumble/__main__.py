@@ -57,13 +57,13 @@ CLI_OPTIONS = {
         "default": "tsv",
         "show_default": True,
     },
-    "generate_modified_decoys": {
+    "include_decoy_psm": {
         "is_flag": True,
         "help": "Parse modifications for decoys in modified PSMlist",
         "default": False,
         "show_default": True,
     },
-    "keep_original": {
+    "include_original_psm": {
         "is_flag": True,
         "help": "Keep the original PSMs in the modified PSMlist",
         "default": False,
@@ -86,6 +86,12 @@ CLI_OPTIONS = {
         "help": "Path to a config file",
         "default": None,
     },
+    "log_level": {
+        "type": click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
+        "default": "INFO",
+        "help": "Set the logging level",
+        "show_default": True,
+    },
 }
 
 
@@ -95,6 +101,10 @@ def main(**kwargs):
     """
     Finding the perfect match for your mass shift.
     """
+    # Set the logging level based on the CLI option
+    log_level = kwargs.get("log_level", "INFO").upper()
+    logging.getLogger().setLevel(log_level)
+
     ctx = click.get_current_context()
 
     # Extract CLI-provided parameters
