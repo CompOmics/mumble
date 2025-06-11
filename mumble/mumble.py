@@ -9,6 +9,7 @@ from pathlib import Path
 from functools import lru_cache
 import hashlib
 import importlib
+import warnings
 
 import pandas as pd
 import pickle
@@ -20,9 +21,14 @@ from pyteomics.mass import std_aa_mass, unimod
 from pyteomics.fasta import IndexedFASTA
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 from rich.pretty import pretty_repr
+from sqlalchemy import exc
+
 
 # Add a logger
 logger = logging.getLogger(__name__)
+
+# suppress warnings from sqlalchemy
+warnings.filterwarnings("ignore", category=exc.SAWarning, message=".*will copy column.*")
 
 
 class PSMHandler:
@@ -1008,7 +1014,7 @@ class _ModificationCache:
 
     def _regenerate_and_save_cache(self) -> None:
         """Regenerate data and save it to the cache."""
-        logger.info("Generating cache data")
+        logger.info("Generating new cache data")
         self.get_unimod_database()
         self.monoisotopic_masses, self.modifications_names = (
             self._generate_modifications_combinations_lists(self.combination_length)
