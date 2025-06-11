@@ -1,9 +1,10 @@
 import click
 import logging
+import sys
 
 from rich.logging import RichHandler
 
-from mumble import PSMHandler
+from mumble import PSMHandler, _ModificationCache
 
 
 # setup logging
@@ -96,11 +97,23 @@ CLI_OPTIONS = {
 
 
 @click.command("cli", context_settings={"show_default": True})
-@click.argument("input_file", type=click.Path(exists=True), default=None)
-def main(**kwargs):
+@click.argument("input_file", type=click.Path(exists=True), default=None, required=False)
+@click.option(
+    "--clear-cache/--no-clear-cache",
+    is_flag=True,
+    default=False,
+    help="Remove the modification cache file and exit early.",
+)
+def main(clear_cache, **kwargs):
     """
     Finding the perfect match for your mass shift.
     """
+    # if the user just wants to clear the cache, do it and quit
+    if clear_cache:
+        _ModificationCache._remove_cache()
+        logging.info("Exiting Mumble. You will find your match another time.")
+        sys.exit(0)
+
     # Set the logging level based on the CLI option
     log_level = kwargs.get("log_level", "INFO").upper()
     logging.getLogger().setLevel(log_level)

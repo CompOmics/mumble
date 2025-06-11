@@ -417,6 +417,7 @@ class _ModificationHandler:
             exclude_mutations=exclude_mutations,
             modification_file=unimod_modification_file,
         )
+        self.cache.load_cache()
 
         self.modification_df = self.cache.modification_df
         self.monoisotopic_masses = self.cache.monoisotopic_masses
@@ -780,11 +781,32 @@ class _ModificationCache:
         self.modifications_names = []
         self.modification_df = None
 
-        # Load or generate data
-        cache_file = self._get_cache_file_path()
-        self._load_or_generate_data(cache_file, force_reload=False)
+        # get cache file path
+        self.cache_file = self._get_cache_file_path()
 
-    def _get_cache_file_path(self):
+    @classmethod
+    def _remove_cache(cls):
+        """
+        Remove the cache file for modifications.
+        """
+        cache_file = cls._get_cache_file_path()
+        if os.path.exists(cache_file):
+            os.remove(cache_file)
+            logger.info("Modification cache removed.")
+        else:
+            logger.warning("Modification cache file does not exist.")
+
+    def load_cache(self, force_reload=False):
+        """
+        Load the cache or generate it if it doesn't exist.
+
+        Args:
+            force_reload (bool, optional): If True, regenerate the cache even if it exists. Defaults to False.
+        """
+        self._load_or_generate_data(self.cache_file, force_reload=force_reload)
+
+    @classmethod
+    def _get_cache_file_path(cls):
         """
         Get path to cache file for combinations of modifications.
 
@@ -828,16 +850,16 @@ class _ModificationCache:
             if cache_data["metadata"] == (
                 self.combination_length,
                 self.exclude_mutations,
-                self.modification_file,
                 self.modification_file_hash,
             ):
+                logger.debug("Cache metadata matches current configuration")
                 try:
-                    logger.info("Loading cache data")
+                    logger.info("Using cached modifcation data")
                     self.modification_df = cache_data["modification_df"]
                     self.monoisotopic_masses = cache_data["monoisotopic_masses"]
                     self.modifications_names = cache_data["modifications_names"]
                 except KeyError:
-                    logger.info("Cache data missing")
+                    logger.info("Cached data invalid or incomplete, regenerating cache")
                     self._regenerate_and_save_cache(cache_file)
             else:
                 self._regenerate_and_save_cache(cache_file)
@@ -986,7 +1008,7 @@ class _ModificationCache:
             self._generate_modifications_combinations_lists(self.combination_length)
         )
         logger.debug(
-            f"New cache metadata: {self.combination_length}, {self.exclude_mutations}, {self.modification_file}, {self.modification_file_hash}"
+            f"New cache metadata: \ncombination length {self.combination_length}, \nexclude_mutations {self.exclude_mutations},\nmodification file hash {self.modification_file_hash}",
         )
         with open(cache_file, "wb") as f:
             pickle.dump(
@@ -994,7 +1016,6 @@ class _ModificationCache:
                     "metadata": (
                         self.combination_length,
                         self.exclude_mutations,
-                        self.modification_file,
                         self.modification_file_hash,
                     ),
                     "modification_df": self.modification_df,
