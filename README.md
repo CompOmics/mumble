@@ -28,9 +28,87 @@ pip install mumble
 ```
 
 
-### Basic Usage
+## Usage
 
-Here's a quick example of how to use the PSM Modification Handler for single PSMs:
+### Command-Line Interface (CLI) Usage
+
+Mumble provides a command-line interface to modify PSMs based on mass shifts, as well as several parameters for customization. You can use the `mumble` command to interact with the tool.
+
+#### Basic Command Syntax
+
+To run the CLI, use the following command:
+
+```bash
+mumble [OPTIONS] INPUT_FILE
+```
+
+Where `INPUT_FILE` is the path to the input file containing the PSM data.
+
+#### Parameters:
+
+Here are the available options you can pass when running the command:
+
+- **`--psm-list`**: (required) Path to the input file containing the PSM data. Must be provided if not already set via arguments.
+- **`--modification-file`**: Path to a restriction list of modifications to use from Unimod. Defaults to `default_ptm_list.tsv` included with the package.
+- **`--psm-file-type`**: Type of the input file to read with PSM_utils (e.g., `mzid`, `tsv`). Default is "infer".
+- **`--aa-combinations`**: Number of amino acid combinations to add as modification. Requires a `fasta_file`. Default is `0`.
+- **`--fasta-file`**: Path to a fasta file (for use with `aa_combinations`).
+- **`--mass-error`**: Mass error for the mass shift, default is `0.02`.
+- **`--output-file`**: Path to the output file to write modified PSMs.
+- **`--filetype-write`**: Type of the output file to write with PSM_utils (e.g., `tsv`, `csv`). Default is `tsv`.
+- **`--include-decoy-psm`**: Flag to parse modifications for decoys in the modified PSM list.
+- **`--include-original-psm`**: Flag to keep the original PSMs in the modified PSM list.
+- **`--combination-length`**: Maximum number of modifications per combination. All lower numbers will be included as well. Default is `1`.
+- **`--exclude-mutations`**: If set, modifications with the classification 'AA substitution' will be excluded.
+- **`--config-file`**: Path to a config file for additional configuration parameters (e.g., custom modification sets, advanced settings).
+- **`--log-level`**: Set the logging level. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. Default is `INFO`.
+- **`--clear-cache`**: Remove the modification cache file and exit early.
+- **`--all-unimod-modifications`**: Use all available modifications from Unimod instead of a subset.
+
+#### Examples:
+
+1. **Modify a single PSM**:
+```bash
+mumble --psm-list "path/to/psm_file.mzid" --mass-error 0.02 --output-file "modified_psms.tsv"
+```
+
+2. **Modify a list of PSMs with custom configurations**:
+```bash
+mumble --psm-list "path/to/psm_file.mzid" --fasta-file "path/to/proteins.fasta" --aa-combinations 5 --config-file "path/to/config_file.toml"
+```
+
+3. **Clear the cache and exit**:
+```bash
+mumble --clear-cache
+```
+
+4. **Using a custom modification file**:
+```bash
+mumble --psm-list "path/to/psm_file.mzid" --modification-file "path/to/custom_ptm_list.tsv"
+```
+
+#### Config file usage
+
+You can also use a configuration file to specify options that will be loaded automatically when running the command. This allows you to store commonly used parameters without needing to pass them every time.
+
+Example configuration file (`config_file.json`):
+
+```json
+{"mass_error" : 0.05
+"aa_combinations" : 2
+"psm_file_type" : "mzid"
+"output_file" : "output.tsv"
+}
+```
+
+You can then specify the path to this file using the `--config-file` option:
+
+```bash
+mumble --config-file "path/to/config_file.toml"
+```
+
+### Python API 
+Here's a quick example of how to use the PSM Modification Handler through the python API for single PSMs:
 
 ```python
 >>> from mumble import PSMHandler
@@ -59,7 +137,7 @@ Here's a quick example of how to use the PSM Modification Handler for single PSM
 #     )
 # ]
 ```
-Here's a quick example of how to use the PSM Modification Handler for PSM lists:
+Here's a quick example of how to use the PSM Modification Handler through the python API for PSM lists:
 ```python
 >>> # Or load a PSM list (from a file or PSMList object)
 >>> psm_list = psm_handler.parse_psm_list("path/to/psm_file.mzid", psm_file_type="mzid")
@@ -71,6 +149,7 @@ Here's a quick example of how to use the PSM Modification Handler for PSM lists:
 >>> psm_handler.write_modified_psm_list(modified_psm_list, output_file="modified_psms.tsv", psm_file_type="tsv")
 ```
 For more information on PSM objects and PSM lists visit [psm_utils](https://github.com/compomics/psm_utils)
+
 ## Testing
 
 The project includes unit tests using `pytest` to ensure code reliability.

@@ -1,13 +1,11 @@
 import os
-
 import pytest
 from unittest.mock import MagicMock
 import pandas as pd
 from collections import namedtuple
 from psm_utils import PSMList, PSM, Peptidoform
-from psm_utils.utils import mz_to_mass
+from psm_utils.io import read_file
 from pyteomics import proforma
-from pyteomics.mass import calculate_mass
 from pyteomics.fasta import IndexedFASTA
 
 from mumble.mumble import _ModificationHandler, PSMHandler
@@ -114,7 +112,7 @@ class TestPSMHandler:
                 Localised_mass_shifts=[Localised_mass_shift("N-term", "Acetyl")]
             )
         ]
-        new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=True)
+        new_psms = psm_handler._get_modified_peptidoforms(psm, include_original_psm=True)
 
         assert isinstance(new_psms, list)
         assert len(new_psms) == 2
@@ -126,7 +124,7 @@ class TestPSMHandler:
             Modification_candidate(Localised_mass_shifts=[Localised_mass_shift(1, "Carbamyl")]),
             Modification_candidate(Localised_mass_shifts=[Localised_mass_shift(4, "Carbamyl")]),
         ]
-        new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=False)
+        new_psms = psm_handler._get_modified_peptidoforms(psm, include_original_psm=False)
 
         assert isinstance(new_psms, list)
         assert len(new_psms) == 2
@@ -142,7 +140,7 @@ class TestPSMHandler:
                 ]
             )
         ]
-        new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=False)
+        new_psms = psm_handler._get_modified_peptidoforms(psm, include_original_psm=False)
 
         assert isinstance(new_psms, list)
         assert len(new_psms) == 1  # 1 combined psm expected
@@ -157,20 +155,19 @@ class TestPSMHandler:
         mod_handler.localize_mass_shift.return_value = [
             Modification_candidate(Localised_mass_shifts=[Localised_mass_shift("N-term", "mod1")])
         ]
-        new_psm_list = psm_handler.add_modified_psms(psm_list, keep_original=True)
+        new_psm_list = psm_handler.add_modified_psms(psm_list, include_original_psm=True)
 
         assert isinstance(new_psm_list, PSMList)
         assert len(new_psm_list) > 1
 
     def test_tool_combination_length_1(self, setup_psm):
 
-        psm_handler = PSMHandler(combination_length=1, exclude_mutations=False)
+        psm_handler = PSMHandler(
+            combination_length=1, exclude_mutations=False, all_unimod_modifications=True
+        )
 
         # retrigger get_unimod_database
-        cache_file = psm_handler.modification_handler.cache._get_cache_file_path()
-        psm_handler.modification_handler.cache._load_or_generate_data(
-            cache_file, force_reload=True
-        )
+        psm_handler.modification_handler.cache.load_cache(force_reload=True)
         psm = setup_psm
 
         result_psm_list = psm_handler.get_modified_peptidoforms_list(psm)
@@ -188,13 +185,10 @@ class TestPSMHandler:
 
     def test_tool_combination_length_2(self, setup_psm):
 
-        psm_handler = PSMHandler(combination_length=2)
+        psm_handler = PSMHandler(combination_length=2, all_unimod_modifications=True)
 
         # retrigger get_unimod_database
-        cache_file = psm_handler.modification_handler.cache._get_cache_file_path()
-        psm_handler.modification_handler.cache._load_or_generate_data(
-            cache_file, force_reload=True
-        )
+        psm_handler.modification_handler.cache._load_or_generate_data(force_reload=True)
 
         psm = setup_psm
         result_psm_list = psm_handler.get_modified_peptidoforms_list(psm)
@@ -228,13 +222,15 @@ class TestPSMHandler:
             peptidoform in result_peptidoforms for peptidoform in expected_double_mod_Peptidoforms
         )
 
-    def test_tool_keep_original(self, setup_psm):
+    def test_tool_include_original_psm(self, setup_psm):
         # psm_handler = setup_psmhandler[0]
-        psm_handler = PSMHandler(combination_length=1)
+        psm_handler = PSMHandler(combination_length=1, all_unimod_modifications=True)
 
         psm = setup_psm
 
-        result_psm_list = psm_handler.get_modified_peptidoforms_list(psm, keep_original=True)
+        result_psm_list = psm_handler.get_modified_peptidoforms_list(
+            psm, include_original_psm=True
+        )
 
         assert psm in result_psm_list
         assert len(result_psm_list) == 3
@@ -309,7 +305,7 @@ class TestModificationHandler:
         restrictions = ["anywhere", "N-term", "C-term", "N-term", "anywhere"]
 
         # Mock the check_protein_level method
-        mod_handler.check_protein_level = MagicMock(return_value=[("pepeptide", "mod1")])
+        mod_handler.check_protein_level = MagicMock(return_value=[("prepeptide", "mod1")])
 
         # Expected output
         expected_output = {
@@ -318,7 +314,7 @@ class TestModificationHandler:
             Localised_mass_shift("N-term", "mod1"),  # N-term modification
             Localised_mass_shift("C-term", "mod1"),  # C-term modification
             Localised_mass_shift("N-term", "mod1"),  # Q in the sequence
-            Localised_mass_shift("pepeptide", "mod1"),  # protein level modification
+            Localised_mass_shift("prepeptide", "mod1"),  # protein level modification
         }
 
         # Call the method
@@ -769,42 +765,71 @@ class TestModificationHandler:
         assert masses == []
         assert combinations == []
 
-    def test_double_combined_modifcations(self):
+    def test_single_combined_modifcations(self):
 
-        mod_handler = _ModificationHandler(combination_length=2)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        data_file_path = os.path.join(current_dir, "test_data", "unmapped_mass_shift_psms.tsv")
 
-        psm = PSM(
-            peptidoform="VTFTETPENGSKW/2",
-            spectrum_id="some_spectrum",
-            is_decoy=False,
-            protein_list=["some_protein"],
-            precursor_mz="748.8581250320699",
+        psm_list_unmapped_psms = read_file(data_file_path, filetype="sage")
+
+        psm_handler = PSMHandler(
+            aa_combinations=0,
+            fasta_file=None,
+            mass_error=0.02,
+            exclude_mutations=True,
+            combination_length=1,
+            all_unimod_modifications=True,
         )
 
-        localized_modifications = mod_handler.localize_mass_shift(psm)
-        name_to_mass_dict = mod_handler.name_to_mass_residue_dict
+        mapped_psms = psm_handler.add_modified_psms(
+            psm_list_unmapped_psms, include_original_psm=False, include_decoy_psm=False
+        )
 
-        expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
-        calcmass = calculate_mass(psm.peptidoform.composition)
-        mass_shift = expmass - calcmass
+        expected_peptidoforms = [
+            "HSALDMTR[Deamidated]YW",
+            "AAADSAVR[Deamidated]LW",
+            "SVTEIQ[Deamidated]EKW",
+            "Q[Deamidated]YSNNIRQL",
+            "QYSNNIR[Deamidated]QL",
+            "QYSNNIRQ[Deamidated]L",
+            "QYSN[Deamidated]NIRQL",
+            "QYSNN[Deamidated]IRQL",
+            "KSLPAEIN[Deamidated]RM",
+            "KSLPAEINR[Deamidated]M",
+            "KSSEVDN[Deamidated]WRII",
+            "KSSEVDNWR[Deamidated]II",
+            "SK[Dicarbamidomethyl]IDLHKY",
+            "SKIDLHK[Dicarbamidomethyl]Y",
+            "SKIDLH[Dicarbamidomethyl]KY",
+            "[Dicarbamidomethyl]-SKIDLHKY",
+            "[Lys]-VMEIHSKYW",
+        ]
+        assert len(mapped_psms) == 17
+        assert set(expected_peptidoforms) == set(
+            [psm.peptidoform.proforma.split("/")[0] for psm in mapped_psms]
+        )
 
-        for candidate in localized_modifications:
+    def test_double_combined_modifcations(self):
 
-            mass_shift1 = candidate.Localised_mass_shifts[0]
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        data_file_path = os.path.join(current_dir, "test_data", "unmapped_mass_shift_psms.tsv")
 
-            # no need to check single mod 'combinations'
-            try:
-                mass_shift2 = candidate.Localised_mass_shifts[1]
-            except:  # noqa: E722
-                continue
+        psm_list_unmapped_psms = read_file(data_file_path, filetype="sage")
 
-            sum = (
-                name_to_mass_dict[mass_shift1.modification].mass
-                + name_to_mass_dict[mass_shift2.modification].mass
-            )
+        psm_handler = PSMHandler(
+            aa_combinations=0,
+            fasta_file=None,
+            mass_error=0.02,
+            exclude_mutations=True,
+            combination_length=2,
+            all_unimod_modifications=True,
+        )
 
-            assert mass_shift1.loc != mass_shift2.loc
-            assert sum >= (mass_shift - 0.02) and sum <= (mass_shift + 0.02)
+        mapped_psms = psm_handler.add_modified_psms(
+            psm_list_unmapped_psms, include_original_psm=False, include_decoy_psm=False
+        )
+
+        assert len(mapped_psms) == 426
 
 
 if __name__ == "__main__":

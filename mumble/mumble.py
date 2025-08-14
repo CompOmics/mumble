@@ -1,4 +1,5 @@
 from copy import deepcopy
+import importlib.resources
 import logging
 import itertools
 import os
@@ -6,6 +7,9 @@ import json
 from collections import namedtuple
 from pathlib import Path
 from functools import lru_cache
+import hashlib
+import importlib
+import warnings
 
 import pandas as pd
 import pickle
@@ -16,9 +20,15 @@ from pyteomics import proforma
 from pyteomics.mass import std_aa_mass, unimod
 from pyteomics.fasta import IndexedFASTA
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.pretty import pretty_repr
+from sqlalchemy import exc
+
 
 # Add a logger
 logger = logging.getLogger(__name__)
+
+# suppress warnings from sqlalchemy
+warnings.filterwarnings("ignore", category=exc.SAWarning, message=".*will copy column.*")
 
 
 class PSMHandler:
@@ -42,7 +52,7 @@ class PSMHandler:
             fasta_file=self.params["fasta_file"],
             combination_length=self.params["combination_length"],
             exclude_mutations=self.params["exclude_mutations"],
-            unimod_modification_file=self.params["unimod_modification_file"],
+            modification_file=self.params["modification_file"],
         )
         self.psm_file_name = None
 
@@ -65,21 +75,25 @@ class PSMHandler:
             "psm_list": None,
             "output_file": None,
             "write_filetype": "tsv",
-            "keep_original": False,
-            "generate_modified_decoys": False,
+            "include_original_psm": False,
+            "include_decoy_psm": False,
             "psm_file_type": "infer",
-            "unimod_modification_file": None,
+            "modification_file": str(
+                importlib.resources.files("mumble.package_data") / "default_ptm_list.tsv"
+            ),
             "modification_mapping": {},
+            "all_unimod_modifications": False,
         }
 
-        # Use a single loop to consolidate parameters
         params = {
             key: overrides.get(
                 key, self.config_loader.get(key, default) if self.config_loader else default
             )
             for key, default in keys_with_defaults.items()
         }
-        logger.info(f"Mumble config: {params}")
+        if params["all_unimod_modifications"]:
+            params["modification_file"] = False
+        logger.info(f"Mumble config: {pretty_repr(params)}")
 
         return params
 
@@ -195,20 +209,20 @@ class PSMHandler:
         copy_psm.peptidoform = new_peptidoform
         return copy_psm
 
-    def _get_modified_peptidoforms(self, psm, keep_original=False) -> list:
+    def _get_modified_peptidoforms(self, psm, include_original_psm=False) -> list:
         """
         Get modified peptidoforms derived from a single PSM.
 
         Args:
             psm (psm_utils.PSM): Original PSM object.
-            keep_original (bool, optional): Whether to keep the original PSM alongside modified ones. Defaults to False.
+            include_original_psm (bool, optional): Whether to keep the original PSM alongside modified ones. Defaults to False.
 
         Returns:
             list: List of modified PSMs, or None if no modifications were applied.
         """
         modified_peptidoforms = []
 
-        if keep_original:
+        if include_original_psm:
             psm["metadata"]["original_psm"] = True
             modified_peptidoforms.append(psm)
 
@@ -228,26 +242,28 @@ class PSMHandler:
 
         return modified_peptidoforms
 
-    def get_modified_peptidoforms_list(self, psm, keep_original=False) -> PSMList:
+    def get_modified_peptidoforms_list(self, psm, include_original_psm=False) -> PSMList:
         """
         Get modified peptidoforms derived from 1 PSM in a PSMList.
 
         Args:
             psm (psm_utils.PSM): PSM object
-            keep_original (bool, optional): Keep the original PSM. Defaults to False.
+            include_original_psm (bool, optional): Keep the original PSM. Defaults to False.
 
         return:
             psm_utils.PSMList: PSMList object
         """
-        modified_peptidoforms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
+        modified_peptidoforms = self._get_modified_peptidoforms(
+            psm, include_original_psm=include_original_psm
+        )
         return PSMList(psm_list=modified_peptidoforms)
 
     def add_modified_psms(
         self,
         psm_list=None,
         psm_file_type=None,
-        generate_modified_decoys=None,
-        keep_original=None,
+        include_decoy_psm=None,
+        include_original_psm=None,
     ) -> PSMList:
         """
         Add modified PSMs to a PSMList based on open modification searches.
@@ -255,8 +271,8 @@ class PSMHandler:
         Args:
             psm_list (str, list, or PSMList): Path to a PSM file, list of PSMs, or a PSMList object.
             psm_file_type (str, optional): Type of PSM file to read, inferred automatically if not provided. Defaults to "infer".
-            generate_modified_decoys (bool, optional): Whether to generate decoys for the modified PSMs. Defaults to False.
-            keep_original (bool, optional): Whether to keep the original unmodified PSMs. Defaults to False.
+            include_decoy_psm (bool, optional): Whether to generate decoys for the modified PSMs. Defaults to False.
+            include_original_psm (bool, optional): Whether to keep the original unmodified PSMs. Defaults to False.
 
         Returns:
             psm_utils.PSMList: A new PSMList object containing the modified PSMs.
@@ -266,15 +282,15 @@ class PSMHandler:
                 pass
             else:
                 raise ValueError("No PSM list provided")
-        if not generate_modified_decoys:
-            generate_modified_decoys = self.params["generate_modified_decoys"]
-        if not keep_original:
-            keep_original = self.params["keep_original"]
+        if not include_decoy_psm:
+            include_decoy_psm = self.params["include_decoy_psm"]
+        if not include_original_psm:
+            include_original_psm = self.params["include_original_psm"]
         if not psm_file_type:
             psm_file_type = self.params["psm_file_type"]
 
         logger.info(
-            f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modfied decoys"
+            f"Adding modified PSMs to PSMlist {'WITH' if include_original_psm else 'WITHOUT'} originals, {'INCLUDING' if include_decoy_psm else 'EXCLUDING'} modfied decoys"
         )
 
         parsed_psm_list = self._parse_psm_list(
@@ -295,12 +311,16 @@ class PSMHandler:
 
             task = progress.add_task("Processing PSMs...", total=len(parsed_psm_list))
             for psm in parsed_psm_list:
-                if (psm.is_decoy) & (not generate_modified_decoys):
+                if (psm.is_decoy) & (not include_decoy_psm):
                     progress.update(task, advance=1)
                     continue
-                new_psms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
+                new_psms = self._get_modified_peptidoforms(
+                    psm, include_original_psm=include_original_psm
+                )
                 if new_psms:
-                    total_new_psms += len(new_psms) if not keep_original else len(new_psms) - 1
+                    total_new_psms += (
+                        len(new_psms) if not include_original_psm else len(new_psms) - 1
+                    )
                     mass_shifted_psms += 1
                     new_psm_list.extend(new_psms)
                 progress.update(task, advance=1)
@@ -392,7 +412,7 @@ class _ModificationHandler:
         fasta_file=None,
         combination_length=1,
         exclude_mutations=False,
-        unimod_modification_file=None,
+        modification_file=None,
     ) -> None:
         """
         Constructor of the class.
@@ -408,13 +428,17 @@ class _ModificationHandler:
         self.cache = _ModificationCache(
             combination_length=combination_length,
             exclude_mutations=exclude_mutations,
-            modification_file=unimod_modification_file,
+            modification_file=modification_file,
         )
+        self.cache.load_cache()
 
         self.modification_df = self.cache.modification_df
         self.monoisotopic_masses = self.cache.monoisotopic_masses
         self.modifications_names = self.cache.modifications_names
-
+        if len(self.modification_df["name"].unique()) == 0:
+            raise ValueError(
+                "No modifications found in the modification file. Please check fileformat."
+            )
         logger.info(
             f'Including {len(self.modification_df["name"].unique())} unique modifications on {len(self.modification_df["name"])} sites'
         )
@@ -763,6 +787,9 @@ class _ModificationCache:
         self.combination_length = combination_length
         self.exclude_mutations = exclude_mutations
         self.modification_file = modification_file
+        self.modification_file_hash = (
+            self._calculate_file_hash(modification_file) if modification_file else None
+        )
         self.modification_inclusion_dict, self.filter_key = self._read_unimod_file(
             modification_file
         )
@@ -770,51 +797,82 @@ class _ModificationCache:
         self.modifications_names = []
         self.modification_df = None
 
-        # Load or generate data
-        cache_file = self._get_cache_file_path()
-        self._load_or_generate_data(cache_file, force_reload=False)
+        # get cache file path
+        self.cache_file = self._get_cache_file_path()
 
-    def _get_cache_file_path(self):
+    @classmethod
+    def _remove_cache(cls):
+        """
+        Remove the cache file for modifications.
+        """
+        cache_file = cls._get_cache_file_path()
+        if os.path.exists(cache_file):
+            os.remove(cache_file)
+            logger.info("Modification cache removed.")
+        else:
+            logger.warning("Modification cache file does not exist.")
+
+    def load_cache(self, force_reload=False):
+        """
+        Load the cache or generate it if it doesn't exist.
+
+        Args:
+            force_reload (bool, optional): If True, regenerate the cache even if it exists. Defaults to False.
+        """
+        self._load_or_generate_data(force_reload=force_reload)
+
+    @classmethod
+    def _get_cache_file_path(cls):
         """
         Get path to cache file for combinations of modifications.
 
         return:
             str: path to cache file
         """
-        current_dir = os.path.dirname(os.path.realpath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        cache_dir = os.path.join(parent_dir, "modification_cache")
+        return str(importlib.resources.files("mumble.package_data") / "modifications_cache.pkl")
 
-        # Create the cache directory if it doesn't exist
-        os.makedirs(cache_dir, exist_ok=True)
+    @staticmethod
+    def _calculate_file_hash(file_path: str) -> str:
+        """
+        Calculate the SHA-256 hash of a file.
 
-        cache_file = os.path.join(cache_dir, "modification_cache.pkl")
-        return cache_file
+        Args:
+            file_path (str): Path to the file to hash.
 
-    def _load_or_generate_data(self, cache_file: str, force_reload: bool = False) -> None:
+        Returns:
+            str: SHA-256 hash of the file.
+        """
+        sha256 = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+
+    def _load_or_generate_data(self, force_reload: bool = False) -> None:
         """Load data from cache or generate and save it if cache doesn't exist."""
-        if os.path.exists(cache_file) and not force_reload:
+        if os.path.exists(self.cache_file) and not force_reload:
             logger.info("Checking cache")
-            with open(cache_file, "rb") as f:
+            with open(self.cache_file, "rb") as f:
                 cache_data = pickle.load(f)
 
             if cache_data["metadata"] == (
                 self.combination_length,
                 self.exclude_mutations,
-                self.modification_file,
+                self.modification_file_hash,
             ):
+                logger.debug("Cache metadata matches current configuration")
                 try:
-                    logger.info("Loading cache data")
+                    logger.info("Using cached modifcation data")
                     self.modification_df = cache_data["modification_df"]
                     self.monoisotopic_masses = cache_data["monoisotopic_masses"]
                     self.modifications_names = cache_data["modifications_names"]
                 except KeyError:
-                    logger.info("Cache data missing")
-                    self._regenerate_and_save_cache(cache_file)
+                    logger.info("Cached data invalid or incomplete, regenerating cache")
+                    self._regenerate_and_save_cache()
             else:
-                self._regenerate_and_save_cache(cache_file)
+                self._regenerate_and_save_cache()
         else:
-            self._regenerate_and_save_cache(cache_file)
+            self._regenerate_and_save_cache()
 
     def get_unimod_database(self):
         """
@@ -823,7 +881,11 @@ class _ModificationCache:
         Args:
             exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
-        unimod_db = unimod.Unimod()
+
+        # Load Unimod database
+        unimod_db = unimod.Unimod(
+            "sqlite:///" + str(importlib.resources.files("mumble.package_data") / "unimod.db")
+        )
         position_id_mapper = {
             2: "anywhere",
             3: "N-term",
@@ -950,21 +1012,23 @@ class _ModificationCache:
         else:
             return [], []
 
-    def _regenerate_and_save_cache(self, cache_file: str) -> None:
+    def _regenerate_and_save_cache(self) -> None:
         """Regenerate data and save it to the cache."""
-        logger.info("Generating cache data")
+        logger.info("Generating new cache data")
         self.get_unimod_database()
         self.monoisotopic_masses, self.modifications_names = (
             self._generate_modifications_combinations_lists(self.combination_length)
         )
-
-        with open(cache_file, "wb") as f:
+        logger.debug(
+            f"New cache metadata: \ncombination length {self.combination_length}, \nexclude_mutations {self.exclude_mutations},\nmodification file hash {self.modification_file_hash}",
+        )
+        with open(self.cache_file, "wb") as f:
             pickle.dump(
                 {
                     "metadata": (
                         self.combination_length,
                         self.exclude_mutations,
-                        self.modification_file,
+                        self.modification_file_hash,
                     ),
                     "modification_df": self.modification_df,
                     "monoisotopic_masses": self.monoisotopic_masses,
@@ -1002,6 +1066,10 @@ class _ModificationCache:
             raise ValueError("Modification file should contain 'id' or 'name' column")
         else:
             return None, None
+
+
+def remove_modification_cache():
+    _ModificationCache._remove_cache()
 
 
 class JSONConfigLoader:

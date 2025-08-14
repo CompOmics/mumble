@@ -1,10 +1,10 @@
 import click
 import logging
-
+import sys
+import importlib
 from rich.logging import RichHandler
 
-from mumble import PSMHandler
-
+from mumble import PSMHandler, remove_modification_cache
 
 # setup logging
 logging.basicConfig(
@@ -20,9 +20,11 @@ CLI_OPTIONS = {
         "type": click.Path(exists=True),
         "help": "Path to the input file.",
     },
-    "unimod_modification_file": {
+    "modification_file": {
         "type": click.Path(exists=True),
         "help": "Restriction list of modifications to use from Unimod.",
+        "default": str(importlib.resources.files("mumble.package_data") / "default_ptm_list.tsv"),
+        "show_default": True,
     },
     "psm_file_type": {
         "type": click.STRING,
@@ -57,13 +59,13 @@ CLI_OPTIONS = {
         "default": "tsv",
         "show_default": True,
     },
-    "generate_modified_decoys": {
+    "include_decoy_psm": {
         "is_flag": True,
         "help": "Parse modifications for decoys in modified PSMlist",
         "default": False,
         "show_default": True,
     },
-    "keep_original": {
+    "include_original_psm": {
         "is_flag": True,
         "help": "Keep the original PSMs in the modified PSMlist",
         "default": False,
@@ -86,15 +88,43 @@ CLI_OPTIONS = {
         "help": "Path to a config file",
         "default": None,
     },
+    "log_level": {
+        "type": click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
+        "default": "INFO",
+        "help": "Set the logging level",
+        "show_default": True,
+    },
+    "all_unimod_modifications": {
+        "is_flag": True,
+        "default": False,
+        "help": "Instead of using a subset of modifications from Unimod, use all available modifications.",
+        "show_default": True,
+    },
 }
 
 
 @click.command("cli", context_settings={"show_default": True})
-@click.argument("input_file", type=click.Path(exists=True), default=None)
-def main(**kwargs):
+@click.argument("input_file", type=click.Path(exists=True), default=None, required=False)
+@click.option(
+    "--clear-cache/--no-clear-cache",
+    is_flag=True,
+    default=False,
+    help="Remove the modification cache file and exit early.",
+)
+def main(clear_cache, **kwargs):
     """
     Finding the perfect match for your mass shift.
     """
+    # if the user just wants to clear the cache, do it and quit
+    if clear_cache:
+        remove_modification_cache()
+        logging.info("Exiting Mumble. You will find your match another time.")
+        sys.exit(0)
+
+    # Set the logging level based on the CLI option
+    log_level = kwargs.get("log_level", "INFO").upper()
+    logging.getLogger().setLevel(log_level)
+
     ctx = click.get_current_context()
 
     # Extract CLI-provided parameters
