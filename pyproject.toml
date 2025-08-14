@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0.0"]
+requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -60,6 +60,14 @@ push            = false
 "pyproject.toml" = ['current_version = "{version}"', 'version = "{version}"']
 "mumble/__init__.py" = ['__version__ = "{version}"']
 
+[tool.setuptools.packages.find]
+include = ["mumble*"]
+
+[tool.setuptools.package-data]
+"mumble.package_data" = [
+  "*.tsv",
+  "*.db",
+]
+
 [tool.setuptools]
-packages = ["mumble"]
-package-data = { "mumble" = ["default_ptm_list.tsv", "unimod.db"] }
+include-package-data = true
