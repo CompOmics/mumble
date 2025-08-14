@@ -305,7 +305,7 @@ class TestModificationHandler:
         restrictions = ["anywhere", "N-term", "C-term", "N-term", "anywhere"]
 
         # Mock the check_protein_level method
-        mod_handler.check_protein_level = MagicMock(return_value=[("pepeptide", "mod1")])
+        mod_handler.check_protein_level = MagicMock(return_value=[("prepeptide", "mod1")])
 
         # Expected output
         expected_output = {
@@ -314,7 +314,7 @@ class TestModificationHandler:
             Localised_mass_shift("N-term", "mod1"),  # N-term modification
             Localised_mass_shift("C-term", "mod1"),  # C-term modification
             Localised_mass_shift("N-term", "mod1"),  # Q in the sequence
-            Localised_mass_shift("pepeptide", "mod1"),  # protein level modification
+            Localised_mass_shift("prepeptide", "mod1"),  # protein level modification
         }
 
         # Call the method
