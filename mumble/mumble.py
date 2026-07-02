@@ -277,16 +277,16 @@ class PSMHandler:
         Returns:
             psm_utils.PSMList: A new PSMList object containing the modified PSMs.
         """
-        if not psm_list:
+        if psm_list is None:
             if psm_list := self.params["psm_list"]:
                 pass
             else:
                 raise ValueError("No PSM list provided")
-        if not include_decoy_psm:
+        if include_decoy_psm is None:
             include_decoy_psm = self.params["include_decoy_psm"]
-        if not include_original_psm:
+        if include_original_psm is None:
             include_original_psm = self.params["include_original_psm"]
-        if not psm_file_type:
+        if psm_file_type is None:
             psm_file_type = self.params["psm_file_type"]
 
         logger.info(

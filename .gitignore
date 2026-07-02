@@ -170,3 +170,6 @@ output_files/
 # vscode
 .vscode
 .vscode/*
+
+# uv 
+uv.lock

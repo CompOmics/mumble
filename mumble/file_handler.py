@@ -233,7 +233,7 @@ class _MetadataParser:
             return []
 
         # Clean up any whitespace in DataFrame
-        df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+        df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
 
         # Create a list of PSM objects from the DataFrame rows
         peptidoforms = [

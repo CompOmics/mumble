@@ -53,7 +53,7 @@ CLI_OPTIONS = {
         "help": "Path to the output file",
         "default": None,
     },
-    "filetype_write": {
+    "write_filetype": {
         "type": click.STRING,
         "help": "Type of the output file to write with PSM_utlis.io.write_file",
         "default": "tsv",
