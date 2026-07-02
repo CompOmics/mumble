@@ -23,7 +23,6 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 from rich.pretty import pretty_repr
 from sqlalchemy import exc
 
-
 # Add a logger
 logger = logging.getLogger(__name__)
 
