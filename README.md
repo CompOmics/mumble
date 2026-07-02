@@ -16,7 +16,7 @@ The PSM Modification Handler is a Python-based tool designed to find candidate u
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.10 or higher
 - pip (Python package installer)
 
 ### Required Libraries
@@ -55,7 +55,7 @@ Here are the available options you can pass when running the command:
 - **`--fasta-file`**: Path to a fasta file (for use with `aa_combinations`).
 - **`--mass-error`**: Mass error for the mass shift, default is `0.02`.
 - **`--output-file`**: Path to the output file to write modified PSMs.
-- **`--filetype-write`**: Type of the output file to write with PSM_utils (e.g., `tsv`, `csv`). Default is `tsv`.
+- **`--write-filetype`**: Type of the output file to write with PSM_utils (e.g., `tsv`, `csv`). Default is `tsv`.
 - **`--include-decoy-psm`**: Flag to parse modifications for decoys in the modified PSM list.
 - **`--include-original-psm`**: Flag to keep the original PSMs in the modified PSM list.
 - **`--combination-length`**: Maximum number of modifications per combination. All lower numbers will be included as well. Default is `1`.
@@ -74,7 +74,7 @@ mumble --psm-list "path/to/psm_file.mzid" --mass-error 0.02 --output-file "modif
 
 2. **Modify a list of PSMs with custom configurations**:
 ```bash
-mumble --psm-list "path/to/psm_file.mzid" --fasta-file "path/to/proteins.fasta" --aa-combinations 5 --config-file "path/to/config_file.toml"
+mumble --psm-list "path/to/psm_file.mzid" --fasta-file "path/to/proteins.fasta" --aa-combinations 5 --config-file "path/to/config_file.json"
 ```
 
 3. **Clear the cache and exit**:
@@ -94,17 +94,18 @@ You can also use a configuration file to specify options that will be loaded aut
 Example configuration file (`config_file.json`):
 
 ```json
-{"mass_error" : 0.05
-"aa_combinations" : 2
-"psm_file_type" : "mzid"
-"output_file" : "output.tsv"
+{
+    "mass_error": 0.05,
+    "aa_combinations": 2,
+    "psm_file_type": "mzid",
+    "output_file": "output.tsv"
 }
 ```
 
 You can then specify the path to this file using the `--config-file` option:
 
 ```bash
-mumble --config-file "path/to/config_file.toml"
+mumble --config-file "path/to/config_file.json"
 ```
 
 ### Python API 
@@ -123,7 +124,7 @@ Here's a quick example of how to use the PSM Modification Handler through the py
 ...     precursor_mz=228.129628 # Required information
 ... )
 >>> # Generate proteoforms for given PSM with a certain MZ
->>> modified_proteoforms = PSMHandler.get_modified_peptidoforms_list(psm, keep_original=False)
+>>> modified_proteoforms = psm_handler.get_modified_peptidoforms_list(psm, include_original_psm=False)
 
 
 >>> # Write the modified PSM list to a file
@@ -139,11 +140,14 @@ Here's a quick example of how to use the PSM Modification Handler through the py
 ```
 Here's a quick example of how to use the PSM Modification Handler through the python API for PSM lists:
 ```python
->>> # Or load a PSM list (from a file or PSMList object)
->>> psm_list = psm_handler.parse_psm_list("path/to/psm_file.mzid", psm_file_type="mzid")
-
->>> # Add modified PSMs to the list
->>> modified_psm_list = psm_handler.add_modified_psms(psm_list, generate_modified_decoys=False, keep_original=True)
+>>> # Add modified PSMs, reading directly from a PSM file
+>>> # (add_modified_psms also accepts a list of PSM objects or a PSMList)
+>>> modified_psm_list = psm_handler.add_modified_psms(
+...     "path/to/psm_file.mzid",
+...     psm_file_type="mzid",
+...     include_decoy_psm=False,
+...     include_original_psm=True,
+... )
 
 >>> # Write the modified PSM list to a file
 >>> psm_handler.write_modified_psm_list(modified_psm_list, output_file="modified_psms.tsv", psm_file_type="tsv")
@@ -175,7 +179,7 @@ Contributions are welcome! Please follow these steps:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 

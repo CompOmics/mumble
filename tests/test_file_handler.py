@@ -375,8 +375,9 @@ class TestMetadataParser:
         ABCD/2\tspec2\t300.2
         """
 
-        with patch("builtins.open", mock_open(read_data=csv_data)), patch(
-            "pandas.read_csv", return_value=pd.read_csv(StringIO(csv_data), delimiter="\t")
+        with (
+            patch("builtins.open", mock_open(read_data=csv_data)),
+            patch("pandas.read_csv", return_value=pd.read_csv(StringIO(csv_data), delimiter="\t")),
         ):
             peptidoforms = metadata_handler.parse_csv_file("dummy_file.tsv")
 
@@ -394,8 +395,9 @@ class TestMetadataParser:
         ABCD\tspec2
         """
 
-        with patch("builtins.open", mock_open(read_data=csv_data)), patch(
-            "pandas.read_csv", return_value=pd.read_csv(StringIO(csv_data), delimiter="\t")
+        with (
+            patch("builtins.open", mock_open(read_data=csv_data)),
+            patch("pandas.read_csv", return_value=pd.read_csv(StringIO(csv_data), delimiter="\t")),
         ):
             peptidoforms = metadata_handler.parse_csv_file("dummy_file.tsv", delimiter="\t")
 
@@ -415,8 +417,9 @@ class TestMetadataParser:
         # Mock empty CSV data
         csv_data = """peptidoform\tspectrum_id\tprecursor_mz"""
 
-        with patch("builtins.open", mock_open(read_data=csv_data)), patch(
-            "pandas.read_csv", return_value=pd.read_csv(StringIO(csv_data), delimiter="\t")
+        with (
+            patch("builtins.open", mock_open(read_data=csv_data)),
+            patch("pandas.read_csv", return_value=pd.read_csv(StringIO(csv_data), delimiter="\t")),
         ):
             peptidoforms = metadata_handler.parse_csv_file("dummy_file.tsv", delimiter="\t")
 
