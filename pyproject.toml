@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mumble"
-version = "0.2.0"
+version = "0.2.1"
 description = "Finding the perfect modification for your mass shift"
 readme = "README.md"
 keywords = [
@@ -51,7 +51,7 @@ target-version = 'py310'
 extend-select = ["T201", "T203"]
 
 [tool.bumpver]
-current_version = "0.2.0"
+current_version = "0.2.1"
 version_pattern = "MAJOR.MINOR.PATCH"
 commit_message  = "Bump version {old_version} -> {new_version}"
 commit          = true
