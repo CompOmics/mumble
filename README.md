@@ -1,6 +1,14 @@
 # Mumble
 
 **Finding the perfect unimod match for your mass shifted PSM**
+
+> [!IMPORTANT]
+> Mumble is under active development and should be considered **beta** software. It is usable
+> and already improves identification rates on open-modification-search-style data, but
+> occasional errors can still occur, especially on unusual input files or uncommon
+> modifications. Results should be reviewed before downstream use, and issues can be reported on
+> the [issue tracker](https://github.com/compomics/mumble/issues).
+
 ## Overview
 
 The PSM Modification Handler is a Python-based tool designed to find candidate unimod modifications for mass shifts. The tool allows users to apply modifications to PSMs, localize mass shifts, and generate lists of modified PSMs.

@@ -15,6 +15,7 @@ keywords = [
 authors = [{ name = "Arthur Declercq", email = "Arthur.Declercq@hotmail.com" }]
 license = { file = "LICENSE" }
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3 :: Only",
