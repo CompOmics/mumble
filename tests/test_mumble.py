@@ -834,3 +834,44 @@ class TestModificationHandler:
 
 if __name__ == "__main__":
     pytest.main()
+
+
+class TestMumbleDecoySites:
+    def test_decoy_sites_are_flagged_and_balanced(self, tmp_path):
+        from psm_utils import PSM
+
+        handler = PSMHandler(include_mumble_decoys=True, include_original_psm=True)
+        # ARTKQTARKSTGGKAPR with +79.9663: Phospho candidates on S/T/Y/... ; decoys elsewhere
+        pf = Peptidoform("ARTKQTARKSTGGKAPR/2")
+        psm = PSM(
+            peptidoform=pf,
+            spectrum_id="1",
+            precursor_mz=(pf.theoretical_mass + 79.9663 + 2 * 1.007276) / 2,
+        )
+        psms = handler.get_modified_peptidoforms_list(psm, include_original_psm=True)
+        assert psms[0]["metadata"]["original_psm"] is True
+        assert psms[0]["metadata"]["mumble_decoy_site"] is False
+        phospho = [p for p in psms[1:] if "Phospho" in str(p.peptidoform)]
+        real = [p for p in phospho if not p["metadata"]["mumble_decoy_site"]]
+        decoy = [p for p in phospho if p["metadata"]["mumble_decoy_site"]]
+        assert real and len(decoy) == len(real)
+        allowed = set(handler.modification_handler.name_to_mass_residue_dict["Phospho"].residues)
+        for p in decoy:
+            residue = str(p.peptidoform).split("[Phospho]")[0][-1]
+            assert residue not in allowed, str(p.peptidoform)
+        for p in real:
+            residue = str(p.peptidoform).split("[Phospho]")[0][-1]
+            assert residue in allowed or "[Phospho]-" in str(p.peptidoform), str(p.peptidoform)
+
+    def test_flag_off_leaves_metadata_untouched(self):
+        from psm_utils import PSM
+
+        handler = PSMHandler(include_original_psm=True)
+        pf = Peptidoform("ARTKQTARKSTGGKAPR/2")
+        psm = PSM(
+            peptidoform=pf,
+            spectrum_id="1",
+            precursor_mz=(pf.theoretical_mass + 79.9663 + 2 * 1.007276) / 2,
+        )
+        psms = handler.get_modified_peptidoforms_list(psm, include_original_psm=True)
+        assert all("mumble_decoy_site" not in p["metadata"] for p in psms)

@@ -77,6 +77,7 @@ class PSMHandler:
             "write_filetype": "tsv",
             "include_original_psm": False,
             "include_decoy_psm": False,
+            "include_mumble_decoys": False,
             "psm_file_type": "infer",
             "modification_file": str(
                 importlib.resources.files("mumble.package_data") / "default_ptm_list.tsv"
@@ -226,18 +227,26 @@ class PSMHandler:
             psm["metadata"]["original_psm"] = True
             modified_peptidoforms.append(psm)
 
-        modification_tuple_list = self.modification_handler.localize_mass_shift(psm)
+        include_mumble_decoys = self.params["include_mumble_decoys"]
+        if include_mumble_decoys and include_original_psm:
+            psm["metadata"]["mumble_decoy_site"] = False
+
+        modification_tuple_list = self.modification_handler.localize_mass_shift(
+            psm, include_decoy_sites=include_mumble_decoys
+        )
         if modification_tuple_list:
             new_proteoforms_list = self._return_mass_shifted_peptidoform(
                 modification_tuple_list, psm.peptidoform
             )
-            for new_proteoform in new_proteoforms_list:
+            for candidate, new_proteoform in zip(modification_tuple_list, new_proteoforms_list):
                 new_psm = self._create_new_psm(
                     psm,
                     new_proteoform,
                 )
                 if new_psm is not None:
                     new_psm["metadata"]["original_psm"] = False
+                    if include_mumble_decoys:
+                        new_psm["metadata"]["mumble_decoy_site"] = candidate.decoy_site
                     modified_peptidoforms.append(new_psm)
 
         return modified_peptidoforms
@@ -538,14 +547,50 @@ class _ModificationHandler:
         # remove duplicate locations
         return set(loc_list)
 
-    def localize_mass_shift(self, psm) -> list[namedtuple]:
+    @staticmethod
+    def get_decoy_localisation(psm, modification_name, residue_list, n_sites) -> list:
+        """
+        Place a residue-specific modification on residues it cannot occupy.
+
+        Used as within-spectrum negatives for site localisation. Returns at most ``n_sites``
+        positions (the number of real candidate sites), evenly spread over the peptide, on
+        unmodified residues that are not in ``residue_list``. Terminal and protein-level
+        specificities are ignored; a modification without residue specificity gets no decoys.
+
+        Args:
+            psm (psm_utils.PSM): PSM object
+            modification_name (str): Name of the modification
+            residue_list (list): Residues the modification is allowed on
+            n_sites (int): Number of real localisations, caps the number of decoy sites
+
+        return:
+            list: List of Localised_mass_shift on forbidden residues
+        """
+        Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
+        allowed = {r for r in residue_list if len(r) == 1}
+        if not allowed or n_sites == 0:
+            return []
+        forbidden = [
+            i
+            for i, (aa, mods) in enumerate(psm.peptidoform.parsed_sequence)
+            if aa not in allowed and mods is None
+        ]
+        if len(forbidden) > n_sites:
+            step = len(forbidden) / n_sites
+            forbidden = [forbidden[int(k * step)] for k in range(n_sites)]
+        return [Localised_mass_shift(i, modification_name) for i in forbidden]
+
+    def localize_mass_shift(self, psm, include_decoy_sites=False) -> list[namedtuple]:
         """Give potential localisations of a mass shift in a peptide
 
         Args:
             psm (psm_utils.PSM): PSM object
+            include_decoy_sites (bool, optional): Also return candidates with single
+                modifications placed on residues they cannot occupy, flagged
+                ``decoy_site=True``. Defaults to False.
 
         return:
-            list: List of Modification_candidate([localised_mass_shift])
+            list: List of Modification_candidate([localised_mass_shift], decoy_site)
         """
         expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
         calcmass = psm.peptidoform.theoretical_mass
@@ -565,7 +610,9 @@ class _ModificationHandler:
         except KeyError:
             return None
 
-        Modification_candidate = namedtuple("Modification_candidate", ["Localised_mass_shifts"])
+        Modification_candidate = namedtuple(
+            "Modification_candidate", ["Localised_mass_shifts", "decoy_site"], defaults=[False]
+        )
 
         # Unified cache for both individual modifications and combined localizations
         cache = {}
@@ -610,6 +657,20 @@ class _ModificationHandler:
             feasible_modifications_candidates.extend(
                 combine_localizations(individual_localizations)
             )
+
+            # Decoy sites: single modifications only, one decoy per real site
+            if include_decoy_sites and len(combination) == 1:
+                mod = combination[0]
+                decoys = self.get_decoy_localisation(
+                    psm,
+                    mod,
+                    self.name_to_mass_residue_dict[mod].residues,
+                    len(individual_localizations[0]),
+                )
+                feasible_modifications_candidates.extend(
+                    Modification_candidate(Localised_mass_shifts=[loc], decoy_site=True)
+                    for loc in decoys
+                )
 
         return feasible_modifications_candidates if feasible_modifications_candidates else None
 
