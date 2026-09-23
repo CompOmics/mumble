@@ -763,6 +763,16 @@ class _ModificationHandler:
             "".join(combo): sum([round(std_aa_mass[aa], 6) for aa in combo])
             for combo in aa_combinations
         }
+        # A combination whose name is also a Unimod name (GG, the ubiquitin remnant) would
+        # overwrite that modification in name_to_mass_residue_dict, which is keyed by name.
+        clashing = sorted(set(aa_to_mass_dict) & set(self.modification_df["name"]))
+        for name in clashing:
+            del aa_to_mass_dict[name]
+        if clashing:
+            logger.debug(
+                f"Amino acid combinations skipped, name taken by a modification: {clashing}"
+            )
+
         self.modification_df = pd.concat(
             [
                 self.modification_df,
@@ -778,6 +788,16 @@ class _ModificationHandler:
                 ),
             ]
         )
+
+        # Candidate lookup binary-searches monoisotopic_masses and reads the parallel
+        # modifications_names, not modification_df, so the combinations have to be merged
+        # into those sorted lists too or they can never be matched to a mass shift.
+        merged = sorted(
+            list(zip(self.monoisotopic_masses, self.modifications_names))
+            + [(mass, (name,)) for name, mass in aa_to_mass_dict.items()]
+        )
+        self.monoisotopic_masses = [mass for mass, _ in merged]
+        self.modifications_names = [names for _, names in merged]
 
     def check_protein_level(self, psm, additional_aa):
         """
