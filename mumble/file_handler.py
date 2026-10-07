@@ -1,9 +1,12 @@
 import logging
+
 import numpy as np
 import pandas as pd
 from psm_utils import PSM, PSMList
 from pyteomics import mgf, mzml
 from rustyms import RawSpectrum
+
+logger = logging.getLogger(__name__)
 
 
 class _SpectrumFileHandler:
@@ -92,9 +95,9 @@ class _SpectrumFileHandler:
                         intensity_array=np.array(spectrum["intensity array"]),
                         precursor_mass=precursor_mass,
                     )
-            logging.info(f"Parsed {len(self.spectra)} spectra from {self.spectrum_file}")
-        except Exception as e:
-            logging.error(f"Error parsing MGF file {self.spectrum_file}: {e}")
+            logger.info(f"Parsed {len(self.spectra)} spectra from {self.spectrum_file}")
+        except Exception:
+            logger.exception(f"Error parsing MGF file {self.spectrum_file}")
 
     def _parse_mzml(self):
         """
@@ -118,7 +121,7 @@ class _SpectrumFileHandler:
                     rt = 0.0
 
                     # Extract precursor mass and charge if available
-                    if "precursorList" in spectrum and spectrum["precursorList"]:
+                    if spectrum.get("precursorList"):
                         precursor = spectrum["precursorList"]["precursor"][0]
                         if "selectedIonList" in precursor:
                             selected_ion = precursor["selectedIonList"]["selectedIon"][0]
@@ -126,7 +129,7 @@ class _SpectrumFileHandler:
                             precursor_charge = int(selected_ion.get("charge state", 0))
 
                     # Extract retention time
-                    if "scanList" in spectrum and spectrum["scanList"]:
+                    if spectrum.get("scanList"):
                         scan = spectrum["scanList"]["scan"][0]
                         for cv_param in scan.get("cvParam", []):
                             if (
@@ -145,9 +148,9 @@ class _SpectrumFileHandler:
                         intensity_array=np.array(spectrum["intensity array"]),
                         precursor_mass=precursor_mass,
                     )
-            logging.info(f"Parsed {len(self.spectra)} spectra from {self.spectrum_file}")
-        except Exception as e:
-            logging.error(f"Error parsing mzML file {self.spectrum_file}: {e}")
+            logger.info(f"Parsed {len(self.spectra)} spectra from {self.spectrum_file}")
+        except Exception:
+            logger.exception(f"Error parsing mzML file {self.spectrum_file}")
 
     def get_spectrum_from_psm(self, psm: PSM):
         """
@@ -217,19 +220,19 @@ class _MetadataParser:
         try:
             df = pd.read_csv(file_name, delimiter=delimiter)
         except FileNotFoundError as e:
-            logging.error(f"File not found: {e}")
+            logger.error(f"File not found: {e}")
             return []
         except pd.errors.EmptyDataError as e:
-            logging.error(f"Empty data: {e}")
+            logger.error(f"Empty data: {e}")
             return []
         except pd.errors.ParserError as e:
-            logging.error(f"Parsing error: {e}")
+            logger.error(f"Parsing error: {e}")
             return []
 
         required_columns = {"peptidoform", "spectrum_id", "precursor_mz"}
         if not required_columns.issubset(df.columns):
             missing = required_columns - set(df.columns)
-            logging.error(f"Missing required columns: {missing}")
+            logger.error(f"Missing required columns: {missing}")
             return []
 
         # Clean up any whitespace in DataFrame

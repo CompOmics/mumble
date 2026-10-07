@@ -1,15 +1,16 @@
 import os
-import pytest
-from unittest.mock import MagicMock
-import pandas as pd
 from collections import namedtuple
-from psm_utils import PSMList, PSM, Peptidoform
+from unittest.mock import MagicMock
+
+import pandas as pd
+import pytest
+from psm_utils import PSM, Peptidoform, PSMList
 from psm_utils.io import read_file
 from pyteomics import proforma
 from pyteomics.fasta import IndexedFASTA
-
-from mumble.mumble import C13_SPACING, _ModificationHandler, PSMHandler
 from pyteomics.mass import std_aa_mass
+
+from mumble.mumble import C13_SPACING, PSMHandler, _ModificationHandler
 
 # Define named tuples globally
 Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
@@ -625,8 +626,8 @@ class TestModificationHandler:
         assert masses == expected_masses
 
         # Convert tuples to frozensets for comparison
-        expected_combinations_set = set(frozenset(x) for x in expected_combinations)
-        combinations_set = set(frozenset(x) for x in combinations)
+        expected_combinations_set = {frozenset(x) for x in expected_combinations}
+        combinations_set = {frozenset(x) for x in combinations}
 
         # Assertions for combinations (ignoring order within tuples and order of tuples in the list)
         assert combinations_set == expected_combinations_set
@@ -746,8 +747,8 @@ class TestModificationHandler:
         assert masses == expected_masses
 
         # Convert tuples to frozensets for comparison
-        expected_combinations_set = set(frozenset(x) for x in expected_combinations)
-        combinations_set = set(frozenset(x) for x in combinations)
+        expected_combinations_set = {frozenset(x) for x in expected_combinations}
+        combinations_set = {frozenset(x) for x in combinations}
 
         # Assertions for combinations (ignoring order within tuples and order of tuples in the list)
         assert combinations_set == expected_combinations_set
@@ -806,9 +807,9 @@ class TestModificationHandler:
             "[Lys]-VMEIHSKYW",
         ]
         assert len(mapped_psms) == 17
-        assert set(expected_peptidoforms) == set(
-            [psm.peptidoform.proforma.split("/")[0] for psm in mapped_psms]
-        )
+        assert set(expected_peptidoforms) == {
+            psm.peptidoform.proforma.split("/")[0] for psm in mapped_psms
+        }
 
     def test_double_combined_modifcations(self):
 

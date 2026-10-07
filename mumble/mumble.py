@@ -1,27 +1,27 @@
-from copy import deepcopy
-import importlib.resources
-import logging
-import itertools
-import os
-import json
-from collections import namedtuple
-from pathlib import Path
-from functools import lru_cache
 import hashlib
 import importlib
+import importlib.resources
+import itertools
+import json
+import logging
+import os
+import pickle
 import warnings
+from collections import namedtuple
+from copy import deepcopy
+from functools import cache
+from pathlib import Path
 
 import pandas as pd
-import pickle
 import platformdirs
+from psm_utils import PSM, Peptidoform, PSMList
 from psm_utils.io import read_file, write_file
-from psm_utils import PSMList, PSM, Peptidoform
 from psm_utils.utils import mz_to_mass
 from pyteomics import proforma
-from pyteomics.mass import std_aa_mass, unimod
 from pyteomics.fasta import IndexedFASTA
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from pyteomics.mass import std_aa_mass, unimod
 from rich.pretty import pretty_repr
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from sqlalchemy import exc
 
 # Add a logger
@@ -36,7 +36,7 @@ warnings.filterwarnings("ignore", category=exc.SAWarning, message=".*will copy c
 class PSMHandler:
     """Class that contains all information about the input file"""
 
-    def __init__(self, config_file: str = None, **kwargs):
+    def __init__(self, config_file: str | None = None, **kwargs):
         """
         Initialize PSMHandler.
 
@@ -179,7 +179,7 @@ class PSMHandler:
                             raise IndexError("Localisation is not in peptide")
 
                         # If the modification is an amino acid substitution
-                        if mod in self.modification_handler.aa_sub_dict.keys():
+                        if mod in self.modification_handler.aa_sub_dict:
                             if (
                                 aa == self.modification_handler.aa_sub_dict[mod][0]
                             ):  # TODO named tuple so indexing is not necesary and more clear
@@ -352,7 +352,7 @@ class PSMHandler:
         return PSMList(psm_list=new_psm_list)
 
     def _parse_psm_list(
-        self, psm_list, psm_file_type="infer", modification_mapping=dict()
+        self, psm_list, psm_file_type="infer", modification_mapping=None
     ) -> PSMList:
         """
         Parse the psm list to get the peptidoform and protein information
@@ -372,7 +372,7 @@ class PSMHandler:
         elif type(psm_list) is str:
             self.psm_file_name = Path(psm_list)
             psm_list = read_file(psm_list, filetype=psm_file_type)
-            psm_list.rename_modifications(modification_mapping)
+            psm_list.rename_modifications(modification_mapping or {})
         elif type(psm_list) is not PSMList:
             raise TypeError("psm_list should be a path to a file or a PSMList object")
 
@@ -407,8 +407,9 @@ class PSMHandler:
         logger.info(f"Writing modified PSM list to {output_file}")
         write_file(psm_list=psm_list, filename=output_file, filetype=psm_file_type)
 
-    @lru_cache(maxsize=None)
-    def cached_process_tag_tokens(self, tag):
+    @staticmethod
+    @cache
+    def cached_process_tag_tokens(tag):
         """
         Process a tag token and cache the result.
 
@@ -1018,7 +1019,7 @@ class _ModificationCache:
             # Filter based on custom inclusion dictionary
             if self.modification_inclusion_dict:
                 key = unimod_id if self.filter_key == "unimod_id" else name
-                if key not in self.modification_inclusion_dict.keys():
+                if key not in self.modification_inclusion_dict:
                     continue
 
             # Default filtering for Unimod database

@@ -1,10 +1,13 @@
-import click
+import importlib
 import logging
 import sys
-import importlib
+
+import click
 from rich.logging import RichHandler
 
 from mumble import PSMHandler, remove_modification_cache
+
+logger = logging.getLogger(__name__)
 
 # setup logging
 logging.basicConfig(
@@ -131,7 +134,7 @@ def main(clear_cache, **kwargs):
     # if the user just wants to clear the cache, do it and quit
     if clear_cache:
         remove_modification_cache()
-        logging.info("Exiting Mumble. You will find your match another time.")
+        logger.info("Exiting Mumble. You will find your match another time.")
         sys.exit(0)
 
     # Set the logging level based on the CLI option
