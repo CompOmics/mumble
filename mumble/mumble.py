@@ -633,8 +633,7 @@ class _ModificationHandler:
 
         # Potential modifications per precursor isotope error: the observed shift minus k 13C
         # spacings, so a modification is found when a 13C peak was selected as the monoisotope.
-        # Only when the unmodified peptide fits at no isotope error: otherwise the original already
-        # explains the precursor and shifted lookups only add chance matches (e.g. 0 - 1 13C ~ Deamidated).
+        # If the unmodified peptide fits at one of the isotope errors, only k = 0 is searched.
         original_fits = self.get_original_isotope_error(psm) is not None
         isotope_errors = [0] if original_fits else self.isotope_errors
         potential_modifications = []  # (combination, isotope_error)
@@ -813,8 +812,8 @@ class _ModificationHandler:
             "".join(combo): sum([round(std_aa_mass[aa], 6) for aa in combo])
             for combo in aa_combinations
         }
-        # A combination whose name is also a Unimod name (GG, the ubiquitin remnant) would
-        # overwrite that modification in name_to_mass_residue_dict, which is keyed by name.
+        # Combinations named like a Unimod modification (e.g. GG) are skipped, as
+        # name_to_mass_residue_dict is keyed by name.
         clashing = sorted(set(aa_to_mass_dict) & set(self.modification_df["name"]))
         for name in clashing:
             del aa_to_mass_dict[name]
@@ -839,9 +838,8 @@ class _ModificationHandler:
             ]
         )
 
-        # Candidate lookup binary-searches monoisotopic_masses and reads the parallel
-        # modifications_names, not modification_df, so the combinations have to be merged
-        # into those sorted lists too or they can never be matched to a mass shift.
+        # Candidate lookup binary-searches monoisotopic_masses and the parallel
+        # modifications_names, so the combinations are merged into those sorted lists.
         merged = sorted(
             list(zip(self.monoisotopic_masses, self.modifications_names))
             + [(mass, (name,)) for name, mass in aa_to_mass_dict.items()]
