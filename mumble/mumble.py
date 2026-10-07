@@ -27,6 +27,8 @@ from sqlalchemy import exc
 # Add a logger
 logger = logging.getLogger(__name__)
 
+C13_SPACING = 1.0033548  # 13C - 12C mass difference (Da)
+
 # suppress warnings from sqlalchemy
 warnings.filterwarnings("ignore", category=exc.SAWarning, message=".*will copy column.*")
 
@@ -53,6 +55,7 @@ class PSMHandler:
             combination_length=self.params["combination_length"],
             exclude_mutations=self.params["exclude_mutations"],
             modification_file=self.params["modification_file"],
+            isotope_errors=self.params["isotope_errors"],
         )
         self.psm_file_name = None
 
@@ -84,6 +87,7 @@ class PSMHandler:
             ),
             "modification_mapping": {},
             "all_unimod_modifications": False,
+            "isotope_errors": [0],
         }
 
         params = {
@@ -225,6 +229,9 @@ class PSMHandler:
 
         if include_original_psm:
             psm["metadata"]["original_psm"] = True
+            # Isotope error at which the unmodified peptide explains the precursor, if any.
+            original_isotope_error = self.modification_handler.get_original_isotope_error(psm)
+            psm["metadata"]["isotope_error"] = str(original_isotope_error or 0)
             modified_peptidoforms.append(psm)
 
         include_mumble_decoys = self.params["include_mumble_decoys"]
@@ -245,6 +252,9 @@ class PSMHandler:
                 )
                 if new_psm is not None:
                     new_psm["metadata"]["original_psm"] = False
+                    new_psm["metadata"]["isotope_error"] = str(
+                        getattr(candidate, "isotope_error", 0)
+                    )
                     if include_mumble_decoys:
                         new_psm["metadata"]["mumble_decoy_site"] = candidate.decoy_site
                     modified_peptidoforms.append(new_psm)
@@ -422,6 +432,7 @@ class _ModificationHandler:
         combination_length=1,
         exclude_mutations=False,
         modification_file=None,
+        isotope_errors=(0,),
     ) -> None:
         """
         Constructor of the class.
@@ -432,6 +443,7 @@ class _ModificationHandler:
             fasta_file (str, optional): Path to the fasta file. Defaults to None.
             combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Dfeaults to 1.
             exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
+            isotope_errors (iterable of int, optional): Precursor isotope errors (number of 13C spacings) to consider when matching a mass shift. Defaults to (0,).
         """
         # TODO add amino acid variations (mutation) as flag
         self.cache = _ModificationCache(
@@ -464,6 +476,8 @@ class _ModificationHandler:
         self.aa_sub_dict = self._get_aa_sub_dict()
 
         self.mass_error = mass_error
+        # Precursor isotope errors: for each k the shift minus k 13C spacings is also matched.
+        self.isotope_errors = sorted(set(isotope_errors), key=abs)  # k = 0 first
         self.fasta_file = IndexedFASTA(fasta_file, label=r"^[\n]?>([\S]*)") if fasta_file else None
 
     def _get_name_to_mass_residue_dict(self):
@@ -580,6 +594,28 @@ class _ModificationHandler:
             forbidden = [forbidden[int(k * step)] for k in range(n_sites)]
         return [Localised_mass_shift(i, modification_name) for i in forbidden]
 
+    @staticmethod
+    def _get_mass_shift(psm) -> float:
+        expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
+        return expmass - psm.peptidoform.theoretical_mass
+
+    def get_original_isotope_error(self, psm):
+        """
+        Isotope error at which the unmodified peptide explains the precursor mass.
+
+        Args:
+            psm (psm_utils.PSM): PSM object
+
+        return:
+            int | None: Smallest ``k`` in ``isotope_errors`` with the mass shift within
+            ``mass_error`` of ``k`` 13C spacings, or None if the original does not fit.
+        """
+        mass_shift = self._get_mass_shift(psm)
+        for k in self.isotope_errors:  # sorted by |k|
+            if abs(mass_shift - k * C13_SPACING) <= self.mass_error:
+                return k
+        return None
+
     def localize_mass_shift(self, psm, include_decoy_sites=False) -> list[namedtuple]:
         """Give potential localisations of a mass shift in a peptide
 
@@ -592,26 +628,36 @@ class _ModificationHandler:
         return:
             list: List of Modification_candidate([localised_mass_shift], decoy_site)
         """
-        expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
-        calcmass = psm.peptidoform.theoretical_mass
-        mass_shift = expmass - calcmass
+        mass_shift = self._get_mass_shift(psm)
 
-        # get all potential modifications
-        try:
-            potential_modifications_indices = self._binary_range_search(
-                self.monoisotopic_masses, mass_shift, self.mass_error
-            )
-            if potential_modifications_indices:
-                potential_modifications_tuples = self.modifications_names[
-                    potential_modifications_indices[0] : potential_modifications_indices[1] + 1
-                ]
-            else:
-                return []
-        except KeyError:
-            return None
+        # Potential modifications per precursor isotope error: the observed shift minus k 13C
+        # spacings, so a modification is found when a 13C peak was selected as the monoisotope.
+        # Only when the unmodified peptide fits at no isotope error: otherwise the original already
+        # explains the precursor and shifted lookups only add chance matches (e.g. 0 - 1 13C ~ Deamidated).
+        original_fits = self.get_original_isotope_error(psm) is not None
+        isotope_errors = [0] if original_fits else self.isotope_errors
+        potential_modifications = []  # (combination, isotope_error)
+        for isotope_error in isotope_errors:
+            try:
+                indices = self._binary_range_search(
+                    self.monoisotopic_masses,
+                    mass_shift - isotope_error * C13_SPACING,
+                    self.mass_error,
+                )
+            except KeyError:
+                continue
+            if indices:
+                potential_modifications.extend(
+                    (combination, isotope_error)
+                    for combination in self.modifications_names[indices[0] : indices[1] + 1]
+                )
+        if not potential_modifications:
+            return []
 
         Modification_candidate = namedtuple(
-            "Modification_candidate", ["Localised_mass_shifts", "decoy_site"], defaults=[False]
+            "Modification_candidate",
+            ["Localised_mass_shifts", "decoy_site", "isotope_error"],
+            defaults=[False, 0],
         )
 
         # Unified cache for both individual modifications and combined localizations
@@ -647,7 +693,7 @@ class _ModificationHandler:
             return result
 
         feasible_modifications_candidates = []
-        for combination in potential_modifications_tuples:
+        for combination, isotope_error in potential_modifications:
             # Get localizations for each modification in the combination
             individual_localizations = [
                 get_single_mod_localizations(mod, psm) for mod in combination
@@ -655,7 +701,8 @@ class _ModificationHandler:
 
             # Combine localizations
             feasible_modifications_candidates.extend(
-                combine_localizations(individual_localizations)
+                candidate._replace(isotope_error=isotope_error)
+                for candidate in combine_localizations(individual_localizations)
             )
 
             # Decoy sites: single modifications only, one decoy per real site
@@ -668,7 +715,9 @@ class _ModificationHandler:
                     len(individual_localizations[0]),
                 )
                 feasible_modifications_candidates.extend(
-                    Modification_candidate(Localised_mass_shifts=[loc], decoy_site=True)
+                    Modification_candidate(
+                        Localised_mass_shifts=[loc], decoy_site=True, isotope_error=isotope_error
+                    )
                     for loc in decoys
                 )
 

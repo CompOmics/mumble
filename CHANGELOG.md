@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   site, evenly spread over the peptide). Candidates are flagged in `metadata["mumble_decoy_site"]`
   (`True` for decoy sites, `False` for real candidates and, when kept, the original PSM). Intended
   as within-spectrum negatives for site-localisation models and false-localisation-rate estimates.
+  Also available as `--include-mumble-decoys` on the command line.
+- `isotope_errors` option (default `[0]`, CLI `--isotope-errors`): mass shifts are also matched
+  after subtracting k 13C spacings for each listed isotope error k, so a modification is found
+  when a 13C peak was selected as the monoisotopic precursor. Shifted lookups are skipped when the
+  unmodified peptide already fits at one of the isotope errors. Every PSM gets
+  `metadata["isotope_error"]`: the k of its candidate, or for the original PSM the k at which the
+  unmodified peptide fits (`0` if it does not fit).
+
+### Fixed
+- Amino-acid combinations (`aa_combinations`) were never merged into the sorted mass lookup and
+  could not be matched to any mass shift.
+- An amino-acid combination named like a Unimod modification (`GG`) overwrote that modification.
 
 ## [0.3.0] - 2026-07-15
 

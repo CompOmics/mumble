@@ -65,6 +65,19 @@ CLI_OPTIONS = {
         "default": False,
         "show_default": True,
     },
+    "include_mumble_decoys": {
+        "is_flag": True,
+        "help": "Also place each single modification on residues it cannot occupy (decoy sites, flagged in metadata 'mumble_decoy_site'), as negatives for site localisation.",
+        "default": False,
+        "show_default": True,
+    },
+    "isotope_errors": {
+        "type": click.INT,
+        "multiple": True,
+        "help": "Precursor isotope error (number of 13C spacings) to consider when matching a mass shift. Repeat for several, e.g. --isotope-errors 0 --isotope-errors 1.",
+        "default": (0,),
+        "show_default": True,
+    },
     "include_original_psm": {
         "is_flag": True,
         "help": "Keep the original PSMs in the modified PSMlist",
