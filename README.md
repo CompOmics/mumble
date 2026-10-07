@@ -65,6 +65,8 @@ Here are the available options you can pass when running the command:
 - **`--output-file`**: Path to the output file to write modified PSMs.
 - **`--write-filetype`**: Type of the output file to write with PSM_utils (e.g., `tsv`, `csv`). Default is `tsv`.
 - **`--include-decoy-psm`**: Flag to parse modifications for decoys in the modified PSM list.
+- **`--include-mumble-decoys`**: Also place each single modification on residues it cannot occupy (one decoy site per real site). Decoy-site PSMs are flagged in `metadata["mumble_decoy_site"]` and serve as negatives for site-localisation models.
+- **`--isotope-errors`**: Precursor isotope error (number of 13C spacings) to consider when matching a mass shift. Repeat the option for several values, e.g. `--isotope-errors 0 --isotope-errors 1`. Default is `0`. The assigned value is written to `metadata["isotope_error"]`.
 - **`--include-original-psm`**: Flag to keep the original PSMs in the modified PSM list.
 - **`--combination-length`**: Maximum number of modifications per combination. All lower numbers will be included as well. Default is `1`.
 - **`--exclude-mutations`**: If set, modifications with the classification 'AA substitution' will be excluded.

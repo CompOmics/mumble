@@ -1,31 +1,33 @@
-from copy import deepcopy
-import importlib.resources
-import logging
-import itertools
-import os
-import json
-from collections import namedtuple
-from pathlib import Path
-from functools import lru_cache
 import hashlib
 import importlib
+import importlib.resources
+import itertools
+import json
+import logging
+import os
+import pickle
 import warnings
+from collections import namedtuple
+from copy import deepcopy
+from functools import cache
+from pathlib import Path
 
 import pandas as pd
-import pickle
 import platformdirs
+from psm_utils import PSM, Peptidoform, PSMList
 from psm_utils.io import read_file, write_file
-from psm_utils import PSMList, PSM, Peptidoform
 from psm_utils.utils import mz_to_mass
 from pyteomics import proforma
-from pyteomics.mass import std_aa_mass, unimod
 from pyteomics.fasta import IndexedFASTA
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from pyteomics.mass import std_aa_mass, unimod
 from rich.pretty import pretty_repr
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from sqlalchemy import exc
 
 # Add a logger
 logger = logging.getLogger(__name__)
+
+C13_SPACING = 1.0033548  # 13C - 12C mass difference (Da)
 
 # suppress warnings from sqlalchemy
 warnings.filterwarnings("ignore", category=exc.SAWarning, message=".*will copy column.*")
@@ -34,7 +36,7 @@ warnings.filterwarnings("ignore", category=exc.SAWarning, message=".*will copy c
 class PSMHandler:
     """Class that contains all information about the input file"""
 
-    def __init__(self, config_file: str = None, **kwargs):
+    def __init__(self, config_file: str | None = None, **kwargs):
         """
         Initialize PSMHandler.
 
@@ -53,6 +55,7 @@ class PSMHandler:
             combination_length=self.params["combination_length"],
             exclude_mutations=self.params["exclude_mutations"],
             modification_file=self.params["modification_file"],
+            isotope_errors=self.params["isotope_errors"],
         )
         self.psm_file_name = None
 
@@ -77,12 +80,14 @@ class PSMHandler:
             "write_filetype": "tsv",
             "include_original_psm": False,
             "include_decoy_psm": False,
+            "include_mumble_decoys": False,
             "psm_file_type": "infer",
             "modification_file": str(
                 importlib.resources.files("mumble.package_data") / "default_ptm_list.tsv"
             ),
             "modification_mapping": {},
             "all_unimod_modifications": False,
+            "isotope_errors": [0],
         }
 
         params = {
@@ -174,7 +179,7 @@ class PSMHandler:
                             raise IndexError("Localisation is not in peptide")
 
                         # If the modification is an amino acid substitution
-                        if mod in self.modification_handler.aa_sub_dict.keys():
+                        if mod in self.modification_handler.aa_sub_dict:
                             if (
                                 aa == self.modification_handler.aa_sub_dict[mod][0]
                             ):  # TODO named tuple so indexing is not necesary and more clear
@@ -224,20 +229,34 @@ class PSMHandler:
 
         if include_original_psm:
             psm["metadata"]["original_psm"] = True
+            # Isotope error at which the unmodified peptide explains the precursor, if any.
+            original_isotope_error = self.modification_handler.get_original_isotope_error(psm)
+            psm["metadata"]["isotope_error"] = str(original_isotope_error or 0)
             modified_peptidoforms.append(psm)
 
-        modification_tuple_list = self.modification_handler.localize_mass_shift(psm)
+        include_mumble_decoys = self.params["include_mumble_decoys"]
+        if include_mumble_decoys and include_original_psm:
+            psm["metadata"]["mumble_decoy_site"] = False
+
+        modification_tuple_list = self.modification_handler.localize_mass_shift(
+            psm, include_decoy_sites=include_mumble_decoys
+        )
         if modification_tuple_list:
             new_proteoforms_list = self._return_mass_shifted_peptidoform(
                 modification_tuple_list, psm.peptidoform
             )
-            for new_proteoform in new_proteoforms_list:
+            for candidate, new_proteoform in zip(modification_tuple_list, new_proteoforms_list):
                 new_psm = self._create_new_psm(
                     psm,
                     new_proteoform,
                 )
                 if new_psm is not None:
                     new_psm["metadata"]["original_psm"] = False
+                    new_psm["metadata"]["isotope_error"] = str(
+                        getattr(candidate, "isotope_error", 0)
+                    )
+                    if include_mumble_decoys:
+                        new_psm["metadata"]["mumble_decoy_site"] = candidate.decoy_site
                     modified_peptidoforms.append(new_psm)
 
         return modified_peptidoforms
@@ -333,7 +352,7 @@ class PSMHandler:
         return PSMList(psm_list=new_psm_list)
 
     def _parse_psm_list(
-        self, psm_list, psm_file_type="infer", modification_mapping=dict()
+        self, psm_list, psm_file_type="infer", modification_mapping=None
     ) -> PSMList:
         """
         Parse the psm list to get the peptidoform and protein information
@@ -353,7 +372,7 @@ class PSMHandler:
         elif type(psm_list) is str:
             self.psm_file_name = Path(psm_list)
             psm_list = read_file(psm_list, filetype=psm_file_type)
-            psm_list.rename_modifications(modification_mapping)
+            psm_list.rename_modifications(modification_mapping or {})
         elif type(psm_list) is not PSMList:
             raise TypeError("psm_list should be a path to a file or a PSMList object")
 
@@ -388,8 +407,9 @@ class PSMHandler:
         logger.info(f"Writing modified PSM list to {output_file}")
         write_file(psm_list=psm_list, filename=output_file, filetype=psm_file_type)
 
-    @lru_cache(maxsize=None)
-    def cached_process_tag_tokens(self, tag):
+    @staticmethod
+    @cache
+    def cached_process_tag_tokens(tag):
         """
         Process a tag token and cache the result.
 
@@ -413,6 +433,7 @@ class _ModificationHandler:
         combination_length=1,
         exclude_mutations=False,
         modification_file=None,
+        isotope_errors=(0,),
     ) -> None:
         """
         Constructor of the class.
@@ -423,6 +444,7 @@ class _ModificationHandler:
             fasta_file (str, optional): Path to the fasta file. Defaults to None.
             combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Dfeaults to 1.
             exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
+            isotope_errors (iterable of int, optional): Precursor isotope errors (number of 13C spacings) to consider when matching a mass shift. Defaults to (0,).
         """
         # TODO add amino acid variations (mutation) as flag
         self.cache = _ModificationCache(
@@ -455,6 +477,8 @@ class _ModificationHandler:
         self.aa_sub_dict = self._get_aa_sub_dict()
 
         self.mass_error = mass_error
+        # Precursor isotope errors: for each k the shift minus k 13C spacings is also matched.
+        self.isotope_errors = sorted(set(isotope_errors), key=abs)  # k = 0 first
         self.fasta_file = IndexedFASTA(fasta_file, label=r"^[\n]?>([\S]*)") if fasta_file else None
 
     def _get_name_to_mass_residue_dict(self):
@@ -538,34 +562,103 @@ class _ModificationHandler:
         # remove duplicate locations
         return set(loc_list)
 
-    def localize_mass_shift(self, psm) -> list[namedtuple]:
-        """Give potential localisations of a mass shift in a peptide
+    @staticmethod
+    def get_decoy_localisation(psm, modification_name, residue_list, n_sites) -> list:
+        """
+        Place a residue-specific modification on residues it cannot occupy.
+
+        Used as within-spectrum negatives for site localisation. Returns at most ``n_sites``
+        positions (the number of real candidate sites), evenly spread over the peptide, on
+        unmodified residues that are not in ``residue_list``. Terminal and protein-level
+        specificities are ignored; a modification without residue specificity gets no decoys.
+
+        Args:
+            psm (psm_utils.PSM): PSM object
+            modification_name (str): Name of the modification
+            residue_list (list): Residues the modification is allowed on
+            n_sites (int): Number of real localisations, caps the number of decoy sites
+
+        return:
+            list: List of Localised_mass_shift on forbidden residues
+        """
+        Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
+        allowed = {r for r in residue_list if len(r) == 1}
+        if not allowed or n_sites == 0:
+            return []
+        forbidden = [
+            i
+            for i, (aa, mods) in enumerate(psm.peptidoform.parsed_sequence)
+            if aa not in allowed and mods is None
+        ]
+        if len(forbidden) > n_sites:
+            step = len(forbidden) / n_sites
+            forbidden = [forbidden[int(k * step)] for k in range(n_sites)]
+        return [Localised_mass_shift(i, modification_name) for i in forbidden]
+
+    @staticmethod
+    def _get_mass_shift(psm) -> float:
+        expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
+        return expmass - psm.peptidoform.theoretical_mass
+
+    def get_original_isotope_error(self, psm):
+        """
+        Isotope error at which the unmodified peptide explains the precursor mass.
 
         Args:
             psm (psm_utils.PSM): PSM object
 
         return:
-            list: List of Modification_candidate([localised_mass_shift])
+            int | None: Smallest ``k`` in ``isotope_errors`` with the mass shift within
+            ``mass_error`` of ``k`` 13C spacings, or None if the original does not fit.
         """
-        expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
-        calcmass = psm.peptidoform.theoretical_mass
-        mass_shift = expmass - calcmass
+        mass_shift = self._get_mass_shift(psm)
+        for k in self.isotope_errors:  # sorted by |k|
+            if abs(mass_shift - k * C13_SPACING) <= self.mass_error:
+                return k
+        return None
 
-        # get all potential modifications
-        try:
-            potential_modifications_indices = self._binary_range_search(
-                self.monoisotopic_masses, mass_shift, self.mass_error
-            )
-            if potential_modifications_indices:
-                potential_modifications_tuples = self.modifications_names[
-                    potential_modifications_indices[0] : potential_modifications_indices[1] + 1
-                ]
-            else:
-                return []
-        except KeyError:
-            return None
+    def localize_mass_shift(self, psm, include_decoy_sites=False) -> list[namedtuple]:
+        """Give potential localisations of a mass shift in a peptide
 
-        Modification_candidate = namedtuple("Modification_candidate", ["Localised_mass_shifts"])
+        Args:
+            psm (psm_utils.PSM): PSM object
+            include_decoy_sites (bool, optional): Also return candidates with single
+                modifications placed on residues they cannot occupy, flagged
+                ``decoy_site=True``. Defaults to False.
+
+        return:
+            list: List of Modification_candidate([localised_mass_shift], decoy_site)
+        """
+        mass_shift = self._get_mass_shift(psm)
+
+        # Potential modifications per precursor isotope error: the observed shift minus k 13C
+        # spacings, so a modification is found when a 13C peak was selected as the monoisotope.
+        # If the unmodified peptide fits at one of the isotope errors, only k = 0 is searched.
+        original_fits = self.get_original_isotope_error(psm) is not None
+        isotope_errors = [0] if original_fits else self.isotope_errors
+        potential_modifications = []  # (combination, isotope_error)
+        for isotope_error in isotope_errors:
+            try:
+                indices = self._binary_range_search(
+                    self.monoisotopic_masses,
+                    mass_shift - isotope_error * C13_SPACING,
+                    self.mass_error,
+                )
+            except KeyError:
+                continue
+            if indices:
+                potential_modifications.extend(
+                    (combination, isotope_error)
+                    for combination in self.modifications_names[indices[0] : indices[1] + 1]
+                )
+        if not potential_modifications:
+            return []
+
+        Modification_candidate = namedtuple(
+            "Modification_candidate",
+            ["Localised_mass_shifts", "decoy_site", "isotope_error"],
+            defaults=[False, 0],
+        )
 
         # Unified cache for both individual modifications and combined localizations
         cache = {}
@@ -600,7 +693,7 @@ class _ModificationHandler:
             return result
 
         feasible_modifications_candidates = []
-        for combination in potential_modifications_tuples:
+        for combination, isotope_error in potential_modifications:
             # Get localizations for each modification in the combination
             individual_localizations = [
                 get_single_mod_localizations(mod, psm) for mod in combination
@@ -608,8 +701,25 @@ class _ModificationHandler:
 
             # Combine localizations
             feasible_modifications_candidates.extend(
-                combine_localizations(individual_localizations)
+                candidate._replace(isotope_error=isotope_error)
+                for candidate in combine_localizations(individual_localizations)
             )
+
+            # Decoy sites: single modifications only, one decoy per real site
+            if include_decoy_sites and len(combination) == 1:
+                mod = combination[0]
+                decoys = self.get_decoy_localisation(
+                    psm,
+                    mod,
+                    self.name_to_mass_residue_dict[mod].residues,
+                    len(individual_localizations[0]),
+                )
+                feasible_modifications_candidates.extend(
+                    Modification_candidate(
+                        Localised_mass_shifts=[loc], decoy_site=True, isotope_error=isotope_error
+                    )
+                    for loc in decoys
+                )
 
         return feasible_modifications_candidates if feasible_modifications_candidates else None
 
@@ -702,6 +812,16 @@ class _ModificationHandler:
             "".join(combo): sum([round(std_aa_mass[aa], 6) for aa in combo])
             for combo in aa_combinations
         }
+        # Combinations named like a Unimod modification (e.g. GG) are skipped, as
+        # name_to_mass_residue_dict is keyed by name.
+        clashing = sorted(set(aa_to_mass_dict) & set(self.modification_df["name"]))
+        for name in clashing:
+            del aa_to_mass_dict[name]
+        if clashing:
+            logger.debug(
+                f"Amino acid combinations skipped, name taken by a modification: {clashing}"
+            )
+
         self.modification_df = pd.concat(
             [
                 self.modification_df,
@@ -717,6 +837,15 @@ class _ModificationHandler:
                 ),
             ]
         )
+
+        # Candidate lookup binary-searches monoisotopic_masses and the parallel
+        # modifications_names, so the combinations are merged into those sorted lists.
+        merged = sorted(
+            list(zip(self.monoisotopic_masses, self.modifications_names))
+            + [(mass, (name,)) for name, mass in aa_to_mass_dict.items()]
+        )
+        self.monoisotopic_masses = [mass for mass, _ in merged]
+        self.modifications_names = [names for _, names in merged]
 
     def check_protein_level(self, psm, additional_aa):
         """
@@ -888,7 +1017,7 @@ class _ModificationCache:
             # Filter based on custom inclusion dictionary
             if self.modification_inclusion_dict:
                 key = unimod_id if self.filter_key == "unimod_id" else name
-                if key not in self.modification_inclusion_dict.keys():
+                if key not in self.modification_inclusion_dict:
                     continue
 
             # Default filtering for Unimod database

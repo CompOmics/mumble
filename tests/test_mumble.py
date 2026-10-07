@@ -1,14 +1,16 @@
 import os
-import pytest
-from unittest.mock import MagicMock
-import pandas as pd
 from collections import namedtuple
-from psm_utils import PSMList, PSM, Peptidoform
+from unittest.mock import MagicMock
+
+import pandas as pd
+import pytest
+from psm_utils import PSM, Peptidoform, PSMList
 from psm_utils.io import read_file
 from pyteomics import proforma
 from pyteomics.fasta import IndexedFASTA
+from pyteomics.mass import std_aa_mass
 
-from mumble.mumble import _ModificationHandler, PSMHandler
+from mumble.mumble import C13_SPACING, PSMHandler, _ModificationHandler
 
 # Define named tuples globally
 Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
@@ -624,8 +626,8 @@ class TestModificationHandler:
         assert masses == expected_masses
 
         # Convert tuples to frozensets for comparison
-        expected_combinations_set = set(frozenset(x) for x in expected_combinations)
-        combinations_set = set(frozenset(x) for x in combinations)
+        expected_combinations_set = {frozenset(x) for x in expected_combinations}
+        combinations_set = {frozenset(x) for x in combinations}
 
         # Assertions for combinations (ignoring order within tuples and order of tuples in the list)
         assert combinations_set == expected_combinations_set
@@ -745,8 +747,8 @@ class TestModificationHandler:
         assert masses == expected_masses
 
         # Convert tuples to frozensets for comparison
-        expected_combinations_set = set(frozenset(x) for x in expected_combinations)
-        combinations_set = set(frozenset(x) for x in combinations)
+        expected_combinations_set = {frozenset(x) for x in expected_combinations}
+        combinations_set = {frozenset(x) for x in combinations}
 
         # Assertions for combinations (ignoring order within tuples and order of tuples in the list)
         assert combinations_set == expected_combinations_set
@@ -805,9 +807,9 @@ class TestModificationHandler:
             "[Lys]-VMEIHSKYW",
         ]
         assert len(mapped_psms) == 17
-        assert set(expected_peptidoforms) == set(
-            [psm.peptidoform.proforma.split("/")[0] for psm in mapped_psms]
-        )
+        assert set(expected_peptidoforms) == {
+            psm.peptidoform.proforma.split("/")[0] for psm in mapped_psms
+        }
 
     def test_double_combined_modifcations(self):
 
@@ -830,6 +832,104 @@ class TestModificationHandler:
         )
 
         assert len(mapped_psms) == 426
+
+
+class TestMumbleDecoySites:
+    def test_decoy_sites_are_flagged_and_balanced(self, tmp_path):
+        from psm_utils import PSM
+
+        handler = PSMHandler(include_mumble_decoys=True, include_original_psm=True)
+        # ARTKQTARKSTGGKAPR with +79.9663: Phospho candidates on S/T/Y/... ; decoys elsewhere
+        pf = Peptidoform("ARTKQTARKSTGGKAPR/2")
+        psm = PSM(
+            peptidoform=pf,
+            spectrum_id="1",
+            precursor_mz=(pf.theoretical_mass + 79.9663 + 2 * 1.007276) / 2,
+        )
+        psms = handler.get_modified_peptidoforms_list(psm, include_original_psm=True)
+        assert psms[0]["metadata"]["original_psm"] is True
+        assert psms[0]["metadata"]["mumble_decoy_site"] is False
+        phospho = [p for p in psms[1:] if "Phospho" in str(p.peptidoform)]
+        real = [p for p in phospho if not p["metadata"]["mumble_decoy_site"]]
+        decoy = [p for p in phospho if p["metadata"]["mumble_decoy_site"]]
+        assert real and len(decoy) == len(real)
+        allowed = set(handler.modification_handler.name_to_mass_residue_dict["Phospho"].residues)
+        for p in decoy:
+            residue = str(p.peptidoform).split("[Phospho]")[0][-1]
+            assert residue not in allowed, str(p.peptidoform)
+        for p in real:
+            residue = str(p.peptidoform).split("[Phospho]")[0][-1]
+            assert residue in allowed or "[Phospho]-" in str(p.peptidoform), str(p.peptidoform)
+
+    def test_flag_off_leaves_metadata_untouched(self):
+        from psm_utils import PSM
+
+        handler = PSMHandler(include_original_psm=True)
+        pf = Peptidoform("ARTKQTARKSTGGKAPR/2")
+        psm = PSM(
+            peptidoform=pf,
+            spectrum_id="1",
+            precursor_mz=(pf.theoretical_mass + 79.9663 + 2 * 1.007276) / 2,
+        )
+        psms = handler.get_modified_peptidoforms_list(psm, include_original_psm=True)
+        assert all("mumble_decoy_site" not in p["metadata"] for p in psms)
+
+
+class TestIsotopeErrors:
+    @staticmethod
+    def _psm(shift):
+        from psm_utils import PSM
+
+        pf = Peptidoform("ARTKQTARKSTGGKAPR/2")
+        return PSM(
+            peptidoform=pf,
+            spectrum_id="1",
+            precursor_mz=(pf.theoretical_mass + shift + 2 * 1.007276) / 2,
+        )
+
+    def test_candidate_found_on_13c_peak(self):
+        # Phospho measured on the first 13C peak: only reachable with isotope error 1.
+        psm = self._psm(79.9663 + C13_SPACING)
+        without = PSMHandler(include_original_psm=True).get_modified_peptidoforms_list(
+            psm, include_original_psm=True
+        )
+        assert not any("Phospho" in str(p.peptidoform) for p in without)
+
+        handler = PSMHandler(include_original_psm=True, isotope_errors=[0, 1])
+        psms = handler.get_modified_peptidoforms_list(
+            self._psm(79.9663 + C13_SPACING), include_original_psm=True
+        )
+        phospho = [p for p in psms if "Phospho" in str(p.peptidoform)]
+        assert phospho
+        assert all(p["metadata"]["isotope_error"] == "1" for p in phospho)
+        assert psms[0]["metadata"]["isotope_error"] == "0"
+
+    def test_original_labelled_with_matching_isotope_error(self):
+        handler = PSMHandler(include_original_psm=True, isotope_errors=[0, 1])
+        psms = handler.get_modified_peptidoforms_list(
+            self._psm(C13_SPACING), include_original_psm=True
+        )
+        assert psms[0]["metadata"]["original_psm"] is True
+        assert psms[0]["metadata"]["isotope_error"] == "1"
+
+
+def test_amino_acid_combination_matches_mass_shift(tmp_path):
+    from psm_utils import PSM
+
+    fasta = tmp_path / "proteins.fasta"
+    fasta.write_text(">P1\nMKWPEPTIDEKR\n>P2\nAAAAK\n")
+    handler = PSMHandler(aa_combinations=1, fasta_file=str(fasta), include_original_psm=True)
+    pf = Peptidoform("PEPTIDEK/2")
+    psm = PSM(
+        peptidoform=pf,
+        spectrum_id="1",
+        protein_list=["P1"],
+        precursor_mz=(pf.theoretical_mass + std_aa_mass["W"] + 2 * 1.007276) / 2,
+    )
+    psms = handler.get_modified_peptidoforms_list(psm, include_original_psm=True)
+    assert any(p.peptidoform.sequence == "WPEPTIDEK" for p in psms), [
+        str(p.peptidoform) for p in psms
+    ]
 
 
 if __name__ == "__main__":

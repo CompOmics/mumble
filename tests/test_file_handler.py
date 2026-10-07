@@ -1,10 +1,12 @@
 from io import StringIO
 from unittest.mock import MagicMock, mock_open, patch
+
 import pandas as pd
-from psm_utils import Peptidoform, PSM, PSMList
-from rustyms import RawSpectrum
 import pytest
-from mumble.file_handler import _SpectrumFileHandler, _MetadataParser
+from psm_utils import PSM, Peptidoform, PSMList
+from rustyms import RawSpectrum
+
+from mumble.file_handler import _MetadataParser, _SpectrumFileHandler
 
 
 class TestSpectrumFileHandler:
