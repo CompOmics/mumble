@@ -59,7 +59,7 @@ Here are the available options you can pass when running the command:
 - **`--psm-list`**: (required) Path to the input file containing the PSM data. Must be provided if not already set via arguments.
 - **`--modification-file`**: Path to a restriction list of modifications to use from Unimod. Defaults to `default_ptm_list.tsv` included with the package.
 - **`--psm-file-type`**: Type of the input file to read with PSM_utils (e.g., `mzid`, `tsv`). Default is "infer".
-- **`--aa-combinations`**: Number of amino acid combinations to add as modification. Requires a `fasta_file`. Default is `0`.
+- **`--aa-combinations`**: Maximum number of amino acids that can be added to the N- or C-terminus of the peptide, as found in the protein sequence. Requires a `fasta_file`. Default is `0`. All proteins of a PSM are checked, and each extended PSM keeps only the proteins that contain the extended sequence. Combinations are named with a `+` prefix (e.g. `+GG`) internally, so they do not clash with Unimod names such as `GG`.
 - **`--fasta-file`**: Path to a fasta file (for use with `aa_combinations`).
 - **`--mass-error`**: Mass error for the mass shift, default is `0.02`.
 - **`--output-file`**: Path to the output file to write modified PSMs.
@@ -67,6 +67,7 @@ Here are the available options you can pass when running the command:
 - **`--include-decoy-psm`**: Flag to parse modifications for decoys in the modified PSM list.
 - **`--include-mumble-decoys`**: Also place each single modification on residues it cannot occupy (one decoy site per real site). Decoy-site PSMs are flagged in `metadata["mumble_decoy_site"]` and serve as negatives for site-localisation models.
 - **`--isotope-errors`**: Precursor isotope error (number of 13C spacings) to consider when matching a mass shift. Repeat the option for several values, e.g. `--isotope-errors 0 --isotope-errors 1`. Default is `0`. The assigned value is written to `metadata["isotope_error"]`.
+- **`--original-isotope-errors`**: Precursor isotope error to consider when checking whether the unmodified peptide explains the precursor mass, separate from the isotope errors at which modifications are searched. Repeat the option for several values. Defaults to the values of `--isotope-errors`.
 - **`--include-original-psm`**: Flag to keep the original PSMs in the modified PSM list.
 - **`--combination-length`**: Maximum number of modifications per combination. All lower numbers will be included as well. Default is `1`.
 - **`--exclude-mutations`**: If set, modifications with the classification 'AA substitution' will be excluded.
