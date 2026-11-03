@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `mass_error_unit` option (default `"Da"`, CLI `--mass-error-unit`): with `"ppm"`, `mass_error`
+  is interpreted relative to the experimental precursor mass instead of as an absolute window,
+  so the tolerance follows the instrument's accuracy across the mass range. The theoretical mass
+  of the peptidoform contributes no error, so the window is `precursor_mass * mass_error * 1e-6`.
+  Applies both to matching a mass shift to a modification and to deciding whether the unmodified
+  peptide fits at an isotope error.
+
 ## [0.4.0] - 2026-10-08
 
 ### Added

@@ -50,6 +50,7 @@ class PSMHandler:
         # initialize modification seeker
         self.modification_handler = _ModificationHandler(
             mass_error=self.params["mass_error"],
+            mass_error_unit=self.params["mass_error_unit"],
             add_aa_combinations=self.params["aa_combinations"],
             fasta_file=self.params["fasta_file"],
             combination_length=self.params["combination_length"],
@@ -71,6 +72,7 @@ class PSMHandler:
         """
         keys_with_defaults = {
             "mass_error": 0.02,
+            "mass_error_unit": "Da",
             "combination_length": 1,
             "exclude_mutations": False,
             "aa_combinations": 0,
@@ -428,6 +430,7 @@ class _ModificationHandler:
     def __init__(
         self,
         mass_error=0.02,
+        mass_error_unit="Da",
         add_aa_combinations=0,
         fasta_file=None,
         combination_length=1,
@@ -440,6 +443,9 @@ class _ModificationHandler:
 
         Args:
             mass_error (float, optional): Mass error for the mass shift. Defaults to 0.02.
+            mass_error_unit (str, optional): Unit of ``mass_error``, ``"Da"`` for an absolute
+                window or ``"ppm"`` for one relative to the experimental precursor mass.
+                Defaults to ``"Da"``.
             add_aa_combinations (int, optional): Number of amino acid combinations to add as modification. Defaults to 0.
             fasta_file (str, optional): Path to the fasta file. Defaults to None.
             combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Dfeaults to 1.
@@ -477,6 +483,9 @@ class _ModificationHandler:
         self.aa_sub_dict = self._get_aa_sub_dict()
 
         self.mass_error = mass_error
+        if mass_error_unit not in ("Da", "ppm"):
+            raise ValueError(f"mass_error_unit must be 'Da' or 'ppm', not {mass_error_unit!r}")
+        self.mass_error_unit = mass_error_unit
         # Precursor isotope errors: for each k the shift minus k 13C spacings is also matched.
         self.isotope_errors = sorted(set(isotope_errors), key=abs)  # k = 0 first
         self.fasta_file = IndexedFASTA(fasta_file, label=r"^[\n]?>([\S]*)") if fasta_file else None
@@ -596,9 +605,29 @@ class _ModificationHandler:
         return [Localised_mass_shift(i, modification_name) for i in forbidden]
 
     @staticmethod
-    def _get_mass_shift(psm) -> float:
-        expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
-        return expmass - psm.peptidoform.theoretical_mass
+    def _get_precursor_mass(psm) -> float:
+        return mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
+
+    def _get_mass_shift(self, psm) -> float:
+        return self._get_precursor_mass(psm) - psm.peptidoform.theoretical_mass
+
+    def _mass_tolerance(self, psm) -> float:
+        """
+        Mass shift tolerance for this PSM, in Da.
+
+        With ``mass_error_unit="ppm"`` the window scales with the experimental precursor mass,
+        since that is what the instrument's accuracy is relative to; the theoretical mass of the
+        peptidoform contributes no error. With ``"Da"`` the configured window is used as is.
+
+        Args:
+            psm (psm_utils.PSM): PSM object
+
+        return:
+            float: Absolute tolerance in Da.
+        """
+        if self.mass_error_unit == "ppm":
+            return self._get_precursor_mass(psm) * self.mass_error * 1e-6
+        return self.mass_error
 
     def get_original_isotope_error(self, psm):
         """
@@ -612,8 +641,9 @@ class _ModificationHandler:
             ``mass_error`` of ``k`` 13C spacings, or None if the original does not fit.
         """
         mass_shift = self._get_mass_shift(psm)
+        mass_error = self._mass_tolerance(psm)
         for k in self.isotope_errors:  # sorted by |k|
-            if abs(mass_shift - k * C13_SPACING) <= self.mass_error:
+            if abs(mass_shift - k * C13_SPACING) <= mass_error:
                 return k
         return None
 
@@ -634,6 +664,7 @@ class _ModificationHandler:
         # Potential modifications per precursor isotope error: the observed shift minus k 13C
         # spacings, so a modification is found when a 13C peak was selected as the monoisotope.
         # If the unmodified peptide fits at one of the isotope errors, only k = 0 is searched.
+        mass_error = self._mass_tolerance(psm)
         original_fits = self.get_original_isotope_error(psm) is not None
         isotope_errors = [0] if original_fits else self.isotope_errors
         potential_modifications = []  # (combination, isotope_error)
@@ -642,7 +673,7 @@ class _ModificationHandler:
                 indices = self._binary_range_search(
                     self.monoisotopic_masses,
                     mass_shift - isotope_error * C13_SPACING,
-                    self.mass_error,
+                    mass_error,
                 )
             except KeyError:
                 continue

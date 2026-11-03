@@ -913,6 +913,55 @@ class TestIsotopeErrors:
         assert psms[0]["metadata"]["isotope_error"] == "1"
 
 
+class TestMassErrorUnit:
+    """`mass_error_unit="ppm"` scales the window with the precursor mass."""
+
+    @staticmethod
+    def _psm(sequence, shift):
+        from psm_utils import PSM
+
+        pf = Peptidoform(f"{sequence}/2")
+        return PSM(
+            peptidoform=pf,
+            spectrum_id="1",
+            precursor_mz=(pf.theoretical_mass + shift + 2 * 1.007276) / 2,
+        )
+
+    def test_invalid_unit_rejected(self):
+        with pytest.raises(ValueError, match="mass_error_unit"):
+            PSMHandler(mass_error_unit="dalton")
+
+    def test_ppm_window_scales_with_precursor_mass(self):
+        # The same 20 ppm setting is a wider absolute window on a heavier precursor, so an
+        # off-centre Phospho shift is reachable there and not on a light peptide.
+        light, heavy = "PEPTIDEK", "ARTKQTARKSTGGKAPRVLATK"
+        # 20 ppm is a 0.020 Da window on the light precursor (1007 Da) and 0.048 Da on the
+        # heavy one (2405 Da), so a 0.035 Da offset falls inside only the latter.
+        offset = 0.035
+        handler = PSMHandler(include_original_psm=True, mass_error=20, mass_error_unit="ppm")
+
+        found = {}
+        for name, sequence in (("light", light), ("heavy", heavy)):
+            psms = handler.get_modified_peptidoforms_list(
+                self._psm(sequence, 79.9663 + offset), include_original_psm=True
+            )
+            found[name] = any("Phospho" in str(p.peptidoform) for p in psms)
+
+        assert found["heavy"], "20 ppm on the heavy precursor should cover a 0.02 Da offset"
+        assert not found["light"], "20 ppm on the light precursor should not"
+
+    def test_da_unit_is_the_default_and_unchanged(self):
+        psm = self._psm("ARTKQTARKSTGGKAPR", 79.9663)
+        default = PSMHandler(include_original_psm=True).get_modified_peptidoforms_list(
+            psm, include_original_psm=True
+        )
+        explicit = PSMHandler(
+            include_original_psm=True, mass_error_unit="Da"
+        ).get_modified_peptidoforms_list(psm, include_original_psm=True)
+        assert [str(p.peptidoform) for p in default] == [str(p.peptidoform) for p in explicit]
+        assert any("Phospho" in str(p.peptidoform) for p in default)
+
+
 def test_amino_acid_combination_matches_mass_shift(tmp_path):
     from psm_utils import PSM
 

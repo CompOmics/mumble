@@ -47,8 +47,14 @@ CLI_OPTIONS = {
     },
     "mass_error": {
         "type": click.FLOAT,
-        "help": "Mass error for the mass shift",
+        "help": "Mass error for the mass shift, in the unit set by --mass-error-unit",
         "default": 0.02,
+        "show_default": True,
+    },
+    "mass_error_unit": {
+        "type": click.Choice(["Da", "ppm"]),
+        "help": "Unit of --mass-error: an absolute window in Da, or one relative to the experimental precursor mass in ppm.",
+        "default": "Da",
         "show_default": True,
     },
     "output_file": {
