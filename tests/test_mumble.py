@@ -10,7 +10,7 @@ from pyteomics import proforma
 from pyteomics.fasta import IndexedFASTA
 from pyteomics.mass import std_aa_mass
 
-from mumble.mumble import C13_SPACING, PSMHandler, _ModificationHandler
+from mumble.mumble import C13_SPACING, PROTON_MASS, PSMHandler, _ModificationHandler
 
 # Define named tuples globally
 Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
@@ -284,10 +284,10 @@ class TestModificationHandler:
 
         mod_handler._add_amino_acid_combinations(2)
         assert mod_handler.modification_df is not None
-        assert "YP" in mod_handler.modification_df["name"].values
-        assert "Q" in mod_handler.modification_df["name"].values
+        assert "+YP" in mod_handler.modification_df["name"].values
+        assert "+Q" in mod_handler.modification_df["name"].values
         assert (
-            mod_handler.modification_df[mod_handler.modification_df["name"] == "YP"][
+            mod_handler.modification_df[mod_handler.modification_df["name"] == "+YP"][
                 "monoisotopic_mass"
             ].values[0]
             == 260.116093
@@ -513,15 +513,13 @@ class TestModificationHandler:
             spectrum_id="some_spectrum",
             is_decoy=False,
             protein_list=["some_protein"],
-            precursor_mz=208.79446854107334,  # Mock value
         )
 
         # Test Case: Localize mass shift for Carbamyl/Acetyl modifications (close masses)
-        original_precursor_mz = psm.precursor_mz
         target_mass_shift = 43.005814 + 43.005814  # We will aim for a mass shift close to this
 
         # Set the precursor m/z so it corresponds to a mass shift close to 43.005814 (Carbamyl)
-        psm.precursor_mz = original_precursor_mz + (target_mass_shift / 3)
+        psm.precursor_mz = (psm.peptidoform.theoretical_mass + target_mass_shift) / 3 + PROTON_MASS
 
         localized_modifications = mod_handler.localize_mass_shift(psm)
 
@@ -791,11 +789,7 @@ class TestModificationHandler:
             "HSALDMTR[Deamidated]YW",
             "AAADSAVR[Deamidated]LW",
             "SVTEIQ[Deamidated]EKW",
-            "Q[Deamidated]YSNNIRQL",
-            "QYSNNIR[Deamidated]QL",
-            "QYSNNIRQ[Deamidated]L",
-            "QYSN[Deamidated]NIRQL",
-            "QYSNN[Deamidated]IRQL",
+            # QYSNNIRQL (+1.0047 Da) is the 13C peak, 0.0207 Da from deamidation
             "KSLPAEIN[Deamidated]RM",
             "KSLPAEINR[Deamidated]M",
             "KSSEVDN[Deamidated]WRII",
@@ -806,7 +800,7 @@ class TestModificationHandler:
             "[Dicarbamidomethyl]-SKIDLHKY",
             "[Lys]-VMEIHSKYW",
         ]
-        assert len(mapped_psms) == 17
+        assert len(mapped_psms) == 12
         assert set(expected_peptidoforms) == {
             psm.peptidoform.proforma.split("/")[0] for psm in mapped_psms
         }
@@ -831,7 +825,7 @@ class TestModificationHandler:
             psm_list_unmapped_psms, include_original_psm=False, include_decoy_psm=False
         )
 
-        assert len(mapped_psms) == 426
+        assert len(mapped_psms) == 418
 
 
 class TestMumbleDecoySites:
@@ -930,6 +924,46 @@ def test_amino_acid_combination_matches_mass_shift(tmp_path):
     assert any(p.peptidoform.sequence == "WPEPTIDEK" for p in psms), [
         str(p.peptidoform) for p in psms
     ]
+
+
+def test_amino_acid_combination_and_unimod_gg_both_generated(tmp_path):
+    from psm_utils import PSM
+
+    # GG extension and the GG ubiquitination remnant have the same mass and name.
+    fasta = tmp_path / "proteins.fasta"
+    fasta.write_text(">P1\nMRGGPEPTIDEKR\n>P2\nAAAAK\n")
+    handler = PSMHandler(aa_combinations=2, fasta_file=str(fasta))
+    pf = Peptidoform("PEPTIDEK/2")
+    psm = PSM(
+        peptidoform=pf,
+        spectrum_id="1",
+        protein_list=["P1"],
+        precursor_mz=(pf.theoretical_mass + 2 * std_aa_mass["G"]) / 2 + PROTON_MASS,
+    )
+    peptidoforms = {str(p.peptidoform) for p in handler.get_modified_peptidoforms_list(psm)}
+    assert "GGPEPTIDEK/2" in peptidoforms
+    assert "PEPTIDEK[GG]/2" in peptidoforms
+    assert not any("+" in p for p in peptidoforms)
+
+
+def test_amino_acid_combination_splits_proteins(tmp_path):
+    from psm_utils import PSM
+
+    fasta = tmp_path / "proteins.fasta"
+    fasta.write_text(">P1\nMKWPEPTIDEKR\n>P2\nMGPEPTIDEKW\n>P3\nAAAAK\n")
+    handler = PSMHandler(aa_combinations=1, fasta_file=str(fasta), include_original_psm=True)
+    pf = Peptidoform("PEPTIDEK/2")
+    psm = PSM(
+        peptidoform=pf,
+        spectrum_id="1",
+        protein_list=["P1", "P2", "P3"],
+        precursor_mz=(pf.theoretical_mass + std_aa_mass["W"] + 2 * 1.007276) / 2,
+    )
+    psms = handler.get_modified_peptidoforms_list(psm, include_original_psm=True)
+    proteins = {p.peptidoform.sequence: p.protein_list for p in psms}
+    assert proteins["PEPTIDEK"] == ["P1", "P2", "P3"]
+    assert proteins["WPEPTIDEK"] == ["P1"]
+    assert proteins["PEPTIDEKW"] == ["P2"]
 
 
 if __name__ == "__main__":
