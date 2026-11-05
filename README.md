@@ -59,7 +59,7 @@ Here are the available options you can pass when running the command:
 - **`--psm-list`**: (required) Path to the input file containing the PSM data. Must be provided if not already set via arguments.
 - **`--modification-file`**: Path to a restriction list of modifications to use from Unimod. Defaults to `default_ptm_list.tsv` included with the package.
 - **`--psm-file-type`**: Type of the input file to read with PSM_utils (e.g., `mzid`, `tsv`). Default is "infer".
-- **`--aa-combinations`**: Maximum number of amino acids that can be added to the N- or C-terminus of the peptide, as found in the protein sequence. Requires a `fasta_file`. Default is `0`. All proteins of a PSM are checked, and each extended PSM keeps only the proteins that contain the extended sequence. Combinations are named with a `+` prefix (e.g. `+GG`) internally, so they do not clash with Unimod names such as `GG`.
+- **`--aa-combinations`**: Maximum number of amino acids that can be added to the N- or C-terminus of the peptide, as found in the protein sequence. Requires a `fasta_file`. Default is `0`.
 - **`--fasta-file`**: Path to a fasta file (for use with `aa_combinations`).
 - **`--mass-error`**: Mass error for the mass shift, default is `0.02`.
 - **`--output-file`**: Path to the output file to write modified PSMs.
