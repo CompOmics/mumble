@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Precursor masses were computed with the mass of a hydrogen atom instead of a proton, making
+  every mass shift `charge` x 0.55 mDa too small. Matches near the `mass_error` boundary can change.
+- Amino-acid combinations (`aa_combinations`) named like a Unimod modification (`GG`) were
+  skipped. They are now named with a `+` prefix (`+GG`), so both explanations are generated.
+- Amino-acid combinations were only checked against the first protein of a PSM. All proteins are
+  now checked, and each extended PSM keeps only the proteins that contain its sequence.
+
 ## [0.4.0] - 2026-10-08
 
 ### Added
@@ -35,5 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Marked the project as beta software in the README and package classifiers.
 - Various small packaging and bug fixes (argument handling in `PSMHandler`, `.gitignore`, README clarifications).
 
+[Unreleased]: https://github.com/CompOmics/mumble/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/CompOmics/mumble/releases/tag/v0.4.0
 [0.3.0]: https://github.com/CompOmics/mumble/releases/tag/v0.3.0

@@ -28,6 +28,10 @@ from sqlalchemy import exc
 logger = logging.getLogger(__name__)
 
 C13_SPACING = 1.0033548  # 13C - 12C mass difference (Da)
+PROTON_MASS = 1.007276467  # (Da)
+# Amino acid combinations (protein-level extensions) are named "+" + residues, e.g. "+GG",
+# so they do not clash with Unimod names such as GG (ubiquitination remnant).
+AA_ADDITION_PREFIX = "+"
 
 # suppress warnings from sqlalchemy
 warnings.filterwarnings("ignore", category=exc.SAWarning, message=".*will copy column.*")
@@ -164,12 +168,12 @@ class PSMHandler:
                         ]
                     elif loc == "prepeptide":
                         new_peptidoform.parsed_sequence = [
-                            (aa, None) for aa in mod
+                            (aa, None) for aa in mod.removeprefix(AA_ADDITION_PREFIX)
                         ] + new_peptidoform.parsed_sequence
 
                     elif loc == "postpeptide":
                         new_peptidoform.parsed_sequence = new_peptidoform.parsed_sequence + [
-                            (aa, None) for aa in mod
+                            (aa, None) for aa in mod.removeprefix(AA_ADDITION_PREFIX)
                         ]
                     else:
                         try:
@@ -250,6 +254,17 @@ class PSMHandler:
                     psm,
                     new_proteoform,
                 )
+                if new_psm is not None and any(
+                    loc in ("prepeptide", "postpeptide")
+                    for loc, _ in candidate.Localised_mass_shifts
+                ):
+                    # The extended sequence may only occur in some of the original
+                    # proteins, so the protein list is restricted to those proteins.
+                    new_psm.protein_list = self.modification_handler.get_proteins_containing(
+                        psm.protein_list, new_psm.peptidoform.sequence
+                    )
+                    if not new_psm.protein_list:
+                        continue
                 if new_psm is not None:
                     new_psm["metadata"]["original_psm"] = False
                     new_psm["metadata"]["isotope_error"] = str(
@@ -596,9 +611,13 @@ class _ModificationHandler:
         return [Localised_mass_shift(i, modification_name) for i in forbidden]
 
     @staticmethod
-    def _get_mass_shift(psm) -> float:
-        expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
-        return expmass - psm.peptidoform.theoretical_mass
+    def _get_experimental_mass(psm) -> float:
+        # psm_utils defaults to the mass of a hydrogen atom, not of a proton.
+        return mz_to_mass(psm.precursor_mz, psm.get_precursor_charge(), adduct_mass=PROTON_MASS)
+
+    @classmethod
+    def _get_mass_shift(cls, psm) -> float:
+        return cls._get_experimental_mass(psm) - psm.peptidoform.theoretical_mass
 
     def get_original_isotope_error(self, psm):
         """
@@ -808,19 +827,12 @@ class _ModificationHandler:
         aa_combinations = []
         for n in range(1, number_of_aa + 1):
             aa_combinations.extend(list(itertools.product("ACDEFGHIKLMNPQRSTVWY", repeat=n)))
+        # Prefixed names keep combinations apart from Unimod names (e.g. "+GG" and GG), so
+        # both explanations of the same mass shift are generated.
         aa_to_mass_dict = {
-            "".join(combo): sum([round(std_aa_mass[aa], 6) for aa in combo])
+            AA_ADDITION_PREFIX + "".join(combo): sum([round(std_aa_mass[aa], 6) for aa in combo])
             for combo in aa_combinations
         }
-        # Combinations named like a Unimod modification (e.g. GG) are skipped, as
-        # name_to_mass_residue_dict is keyed by name.
-        clashing = sorted(set(aa_to_mass_dict) & set(self.modification_df["name"]))
-        for name in clashing:
-            del aa_to_mass_dict[name]
-        if clashing:
-            logger.debug(
-                f"Amino acid combinations skipped, name taken by a modification: {clashing}"
-            )
 
         self.modification_df = pd.concat(
             [
@@ -853,34 +865,51 @@ class _ModificationHandler:
 
         Args:
             psm (psm_utils.PSM): PSM object
-            additional_aa (str): Additional amino acid to check
+            additional_aa (str): Name of the amino acid combination, e.g. "+GG". The
+                AA_ADDITION_PREFIX is optional.
+
+        return:
+            list: ("prepeptide" | "postpeptide", additional_aa) for each supported extension
         """
 
         # Do this for decoys? Then we should be able to reverese sequences and shuffled decoys will never work
-        # TODO Multiple proteins require PSMs to be split based on proteins
 
         if psm.is_decoy:
             return []
+        # All proteins of the PSM are checked. The proteins supporting an extension are
+        # assigned per new PSM in PSMHandler._get_modified_peptidoforms.
+        sequence = psm.peptidoform.sequence
+        proteins = self.get_proteins_containing(psm.protein_list, sequence)
+
+        residues = additional_aa.removeprefix(AA_ADDITION_PREFIX)
+
         found_additional_amino_acids = []
-
-        protein_sequence = self.fasta_file[psm.protein_list[0]].sequence
-        peptide_start_position = protein_sequence.find(psm.peptidoform.sequence)
-        peptide_end_position = peptide_start_position + len(psm.peptidoform.sequence)
-        additional_aa_len = len(additional_aa)
-
-        if (
-            protein_sequence[peptide_start_position - additional_aa_len : peptide_start_position]
-            == additional_aa
-        ):
+        if self.get_proteins_containing(proteins, residues + sequence):
             found_additional_amino_acids.append(("prepeptide", additional_aa))
-
-        if (
-            protein_sequence[peptide_end_position : peptide_end_position + additional_aa_len]
-            == additional_aa
-        ):
+        if self.get_proteins_containing(proteins, sequence + residues):
             found_additional_amino_acids.append(("postpeptide", additional_aa))
 
         return found_additional_amino_acids
+
+    def get_proteins_containing(self, protein_list, sequence):
+        """
+        Get the proteins in protein_list whose sequence contains the given peptide sequence.
+
+        Args:
+            protein_list (list): List of protein accessions
+            sequence (str): Peptide sequence
+
+        return:
+            list: Protein accessions that contain the sequence
+        """
+        proteins = []
+        for protein in protein_list or []:
+            try:
+                if sequence in self.fasta_file[protein].sequence:
+                    proteins.append(protein)
+            except KeyError:
+                logger.debug(f"Protein {protein} not found in fasta file")
+        return proteins
 
 
 class _ModificationCache:

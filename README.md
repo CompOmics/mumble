@@ -67,7 +67,6 @@ Here are the available options you can pass when running the command:
 - **`--include-decoy-psm`**: Flag to parse modifications for decoys in the modified PSM list.
 - **`--include-mumble-decoys`**: Also place each single modification on residues it cannot occupy (one decoy site per real site). Decoy-site PSMs are flagged in `metadata["mumble_decoy_site"]` and serve as negatives for site-localisation models.
 - **`--isotope-errors`**: Precursor isotope error (number of 13C spacings) to consider when matching a mass shift. Repeat the option for several values, e.g. `--isotope-errors 0 --isotope-errors 1`. Default is `0`. The assigned value is written to `metadata["isotope_error"]`.
-- **`--original-isotope-errors`**: Precursor isotope error to consider when checking whether the unmodified peptide explains the precursor mass, separate from the isotope errors at which modifications are searched. Repeat the option for several values. Defaults to the values of `--isotope-errors`.
 - **`--include-original-psm`**: Flag to keep the original PSMs in the modified PSM list.
 - **`--combination-length`**: Maximum number of modifications per combination. All lower numbers will be included as well. Default is `1`.
 - **`--exclude-mutations`**: If set, modifications with the classification 'AA substitution' will be excluded.
